@@ -189,9 +189,9 @@ service cloud.firestore {
           (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'streakCount', 'sundayBonusZar', 'username', 'updatedAt'])) ||
           (isOwner(playerId)
             && incoming().coins >= existing().coins - 250
-            && incoming().coins <= existing().coins + 600
+            && incoming().coins <= existing().coins + 1000
             && incoming().weeklyCoins >= existing().weeklyCoins
-            && incoming().weeklyCoins <= existing().weeklyCoins + 600
+            && incoming().weeklyCoins <= existing().weeklyCoins + 1000
             && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'streakCount', 'updatedAt'])) ||
           (isOwner(playerId)
             && incoming().coins == 0
@@ -248,7 +248,7 @@ service cloud.firestore {
           && exists(/databases/$(database)/documents/playerPrivate/$(playerId))
           && (
             isAdmin() ||
-            (isOwner(playerId) && incoming().uid == request.auth.uid && incoming().amount >= -250 && incoming().amount <= 600)
+            (isOwner(playerId) && incoming().uid == request.auth.uid && incoming().amount >= -250 && incoming().amount <= 1000)
           );
         allow update, delete: if false;
       }

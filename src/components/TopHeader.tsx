@@ -106,35 +106,54 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           </span>
         </div>
 
-        <div className="relative shrink-0">
-          <div
-            className={`gold-gradient-bg text-[#181307] rounded-full px-2.5 sm:px-3 py-1 flex items-center gap-1.5 transition-all duration-300 ${
-              glowActive
-                ? 'ring-2 ring-[#FFF5CA] shadow-[0_0_24px_rgba(252,231,162,0.75)] scale-[1.04]'
-                : 'shadow-sm shadow-[#D4AF37]/20'
-            }`}
-          >
-            <Coins className="w-3.5 h-3.5 shrink-0" />
-            <span className="font-mono-num text-[11px] sm:text-xs font-extrabold whitespace-nowrap">
-              {displayCoins.toLocaleString()} Coins
-            </span>
-            <span className="hidden sm:inline text-[#181307]/45 text-xs" aria-hidden="true">
-              ·
-            </span>
-            <span className="hidden sm:inline font-mono-num text-xs font-semibold whitespace-nowrap">
-              +R{sundayBonusZar} Pool
-            </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="relative shrink-0">
+            <div
+              className={`gold-gradient-bg text-[#181307] rounded-full px-2.5 sm:px-3 py-1 flex items-center gap-1.5 transition-all duration-300 ${
+                glowActive
+                  ? 'ring-2 ring-[#FFF5CA] shadow-[0_0_24px_rgba(252,231,162,0.75)] scale-[1.04]'
+                  : 'shadow-sm shadow-[#D4AF37]/20'
+              }`}
+            >
+              <Coins className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-mono-num text-[11px] sm:text-xs font-extrabold whitespace-nowrap">
+                {displayCoins.toLocaleString()} Coins
+              </span>
+              <span className="hidden sm:inline text-[#181307]/45 text-xs" aria-hidden="true">
+                ·
+              </span>
+              <span className="hidden sm:inline font-mono-num text-xs font-semibold whitespace-nowrap">
+                +R{sundayBonusZar} Pool
+              </span>
+            </div>
+
+            {floatingDelta && (
+              <span
+                key={floatingDelta.id}
+                aria-hidden="true"
+                className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-[#181307] border border-[#FCE7A2]/80 text-[#FCE7A2] font-mono-num text-[11px] font-extrabold whitespace-nowrap shadow-lg animate-bounce"
+              >
+                +{floatingDelta.amount.toLocaleString()} 🪙
+              </span>
+            )}
           </div>
 
-          {floatingDelta && (
+          <button
+            type="button"
+            onClick={() => onSelectTab('vault')}
+            aria-label="Open Secret Mystery Vault — Free Gift"
+            title="Open Mystery Gifts"
+            className="relative w-10 h-10 rounded-xl bg-gradient-to-br from-yellow-400 via-amber-500 to-orange-600 border-2 border-yellow-200 shadow-[0_0_20px_rgba(251,191,36,0.9)] flex items-center justify-center hover:brightness-110 active:scale-95 transition-transform shrink-0 cursor-pointer"
+          >
+            <Gift className="w-5 h-5 text-zinc-950 stroke-[2.3] animate-bounce" />
             <span
-              key={floatingDelta.id}
               aria-hidden="true"
-              className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-[#181307] border border-[#FCE7A2]/80 text-[#FCE7A2] font-mono-num text-[11px] font-extrabold whitespace-nowrap shadow-lg animate-bounce"
+              className="absolute -top-1.5 -right-2 px-1 py-[1px] rounded-full bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 border border-yellow-200 text-[8px] leading-tight font-black tracking-wider text-white shadow-[0_0_8px_rgba(249,115,22,0.95)] flex items-center gap-0.5"
             >
-              +{floatingDelta.amount.toLocaleString()} 🪙
+              <span className="w-1.5 h-1.5 rounded-full bg-yellow-200 animate-ping" />
+              <span>FREE</span>
             </span>
-          )}
+          </button>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">

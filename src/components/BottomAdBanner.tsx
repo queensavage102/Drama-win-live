@@ -11,7 +11,8 @@ const AD_SRC_DOC = `<!DOCTYPE html>
         width: 320px;
         height: 50px;
         overflow: hidden;
-        background: transparent;
+        background-color: #09090b;
+        color-scheme: dark;
       }
     </style>
   </head>
@@ -31,7 +32,13 @@ const AD_SRC_DOC = `<!DOCTYPE html>
 
 export const BottomAdBanner: React.FC = () => {
   return (
-    <div className="w-[320px] h-[50px] mx-auto overflow-hidden flex items-center justify-center">
+    <div
+      style={{ backgroundColor: '#09090b', colorScheme: 'dark' }}
+      className="relative w-[320px] h-[50px] mx-auto overflow-hidden flex items-center justify-center"
+    >
+      <span className="text-[10px] text-zinc-600 absolute inset-0 flex items-center justify-center pointer-events-none">
+        Sponsored Ad
+      </span>
       <iframe
         title="ad-banner"
         width="320"
@@ -39,7 +46,8 @@ export const BottomAdBanner: React.FC = () => {
         scrolling="no"
         frameBorder="0"
         srcDoc={AD_SRC_DOC}
-        className="w-[320px] h-[50px] border-0 block"
+        style={{ backgroundColor: '#09090b', colorScheme: 'dark' }}
+        className="relative z-10 w-[320px] h-[50px] border-0 block"
       />
     </div>
   );

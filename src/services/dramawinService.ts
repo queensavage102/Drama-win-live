@@ -365,7 +365,7 @@ export async function awardPlayerCoins(
   const newCoins = Math.max(0, player.coins + roundedDelta);
   const weeklyGain = Math.max(
     0,
-    Math.min(600, Math.round(weeklyBonusDelta !== undefined ? weeklyBonusDelta : Math.max(0, walletDelta)))
+    Math.min(1000, Math.round(weeklyBonusDelta !== undefined ? weeklyBonusDelta : Math.max(0, walletDelta)))
   );
   const newWeekly = player.weeklyCoins + weeklyGain;
   const qualified = newWeekly >= qualificationThreshold;
@@ -682,6 +682,35 @@ export async function claimBannerAd(
     }
   );
   return true;
+}
+
+export async function awardMysteryBoxCoins(
+  player: LeaderboardPlayer,
+  privateState: PlayerPrivate,
+  boxNumber: number,
+  rewardCoins: number,
+  qualificationThreshold: number,
+  isJackpot = false
+): Promise<void> {
+  const todayKey = getTodayDateKey();
+  const safeReward = Math.max(100, Math.min(1000, Math.round(rewardCoins)));
+  await awardPlayerCoins(
+    player,
+    privateState,
+    safeReward,
+    qualificationThreshold,
+    {
+      lastActivityDate: todayKey,
+    },
+    undefined,
+    safeReward,
+    {
+      category: 'mystery-box',
+      title: isJackpot
+        ? `Mystery Box #${boxNumber} — 11th Box Jackpot`
+        : `Mystery Box #${boxNumber} Bonus`,
+    }
+  );
 }
 
 export async function claimMysteryBox(

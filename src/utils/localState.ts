@@ -664,14 +664,20 @@ export function claimLocalMysteryBox(params: {
     player.username.trim().toLowerCase() === targetUsername;
   const isR5Winner = Boolean(appConfig.nextPickWinsR5) || isNamedWinner;
 
-  const coinRewards = [25, 50, 75, 100];
+  const is11thBoxJackpot = openedToday.length + 1 === 11;
   const chosen: BoxOutcome = isR5Winner
     ? { boxNumber, kind: 'airtime', coins: 0 }
-    : {
-        boxNumber,
-        kind: 'coins',
-        coins: coinRewards[Math.floor(Math.random() * coinRewards.length)],
-      };
+    : is11thBoxJackpot
+      ? {
+          boxNumber,
+          kind: 'jackpot',
+          coins: 1000,
+        }
+      : {
+          boxNumber,
+          kind: 'coins',
+          coins: 100,
+        };
 
   const entryCost = paidWithCoins ? MYSTERY_ENTRY_COST : 0;
   const walletDelta = chosen.coins - entryCost;
@@ -713,14 +719,16 @@ export function claimLocalMysteryBox(params: {
     privateUpdates: {
       openedMysteryBoxesDate: todayKey,
       openedMysteryBoxesToday: nextOpened,
-      lastMysteryPickDate: nextOpened.length >= 12 ? todayKey : '',
+      lastMysteryPickDate: '',
     },
     txMeta: {
       category: 'mystery-box',
       title:
         chosen.kind === 'airtime'
           ? `Mystery Box #${boxNumber} — R5 Airtime Win`
-          : `Mystery Box #${boxNumber} Bonus`,
+          : chosen.kind === 'jackpot'
+            ? `Mystery Box #${boxNumber} — 11th Box Jackpot`
+            : `Mystery Box #${boxNumber} Bonus`,
     },
   });
 
@@ -733,6 +741,17 @@ export function claimLocalMysteryBox(params: {
     winnerRecord,
     newPoolPrizeZar,
   };
+}
+
+export function resetLocalMysteryBoxes(privateProfile: PlayerPrivate): PlayerPrivate {
+  const updated: PlayerPrivate = {
+    ...privateProfile,
+    openedMysteryBoxesDate: getTodayDateKey(),
+    openedMysteryBoxesToday: [],
+    lastMysteryPickDate: '',
+  };
+  safeWriteJson(GUEST_PRIVATE_KEY, updated);
+  return updated;
 }
 
 export function getLast7DaysDateKeysSAST(now = new Date()): {

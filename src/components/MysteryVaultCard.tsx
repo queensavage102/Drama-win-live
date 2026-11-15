@@ -6,7 +6,7 @@ import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 export interface BoxOutcome {
   boxNumber: number;
-  kind: 'airtime' | 'coins';
+  kind: 'airtime' | 'coins' | 'jackpot';
   coins: number;
   voucherCode?: string;
 }
@@ -14,7 +14,7 @@ export interface BoxOutcome {
 export interface MysteryRevealState {
   dateKey: string;
   boxNumber: number;
-  kind: 'airtime' | 'coins';
+  kind: 'airtime' | 'coins' | 'jackpot';
   coins?: number;
   winnerRecord?: MysteryWinnerRecord;
   newPoolPrizeZar?: number;
@@ -224,12 +224,12 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
           </div>
         </div>
 
-        {/* Result Banner for latest opened regular or winning box */}
+        {/* Result Banner for latest opened regular, 11th-box jackpot, or winning box */}
         {activeRevealForToday && (
           <div
             role="status"
             className={`relative rounded-xl px-4 py-3 border flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm ${
-              activeRevealForToday.kind === 'airtime'
+              activeRevealForToday.kind === 'airtime' || activeRevealForToday.kind === 'jackpot'
                 ? 'gold-gradient-bg border-[#FFF2C2] text-[#181307] font-bold shadow-lg shadow-[#D4AF37]/30'
                 : 'bg-[#17130A] border-[#D4AF37]/45 text-[#FCE7A2]'
             }`}
@@ -238,6 +238,13 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
               <span>
                 🎉 YOU WON CONGRATULATIONS! 🎉 Box #{activeRevealForToday.boxNumber} unlocked R5 Airtime!
               </span>
+            ) : activeRevealForToday.kind === 'jackpot' ? (
+              <div className="flex items-center gap-2.5">
+                <RealisticGoldCoin sizePx={48} emblem="★" className="shrink-0" />
+                <span>
+                  🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁
+                </span>
+              </div>
             ) : (
               <>
                 <div className="flex items-center gap-2.5">
@@ -263,19 +270,23 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
             const isOpenedToday = openedTodayList.includes(boxNumber);
             const isLatestPicked = activeRevealForToday?.boxNumber === boxNumber;
             const isWonR5 = isLatestPicked && activeRevealForToday?.kind === 'airtime';
-            const isInteractive = !isOpenedToday;
+            const isWonJackpot = isLatestPicked && activeRevealForToday?.kind === 'jackpot';
+            const isWinningTile = isWonR5 || isWonJackpot;
+            const isInteractive = !isOpenedToday && activeRevealForToday?.kind !== 'jackpot';
             const shimmerDelay = `${(idx % 4) * 0.45}s`;
 
             const boxClasses = `group relative min-h-[118px] sm:min-h-[132px] rounded-2xl border p-2.5 sm:p-3 flex flex-col items-center justify-center gap-1.5 overflow-hidden transition-all duration-300 ${
               isOpenedToday
-                ? isWonR5
+                ? isWinningTile
                   ? 'bg-gradient-to-b from-[#45330E] via-[#241A07] to-[#0D0A04] border-[#FFF5C8] shadow-[0_0_34px_rgba(252,231,162,0.55),inset_0_1px_0_rgba(255,250,224,0.7)]'
                   : 'bg-gradient-to-b from-[#1A160D] via-[#100E09] to-[#08080A] border-[#D4AF37]/30 opacity-80 cursor-not-allowed'
-                : `bg-gradient-to-b from-[#251E0D] via-[#131009] to-[#070708] hover:border-[#FFF0B8] hover:-translate-y-0.5 hover:scale-[1.03] active:scale-[0.97] cursor-pointer ${
-                    highlightVault
-                      ? 'border-[#FFF0B8] ring-2 ring-[#FCE7A2]/85 mystery-vault-highlight'
-                      : 'border-[#D4AF37]/65 shadow-[0_0_24px_rgba(212,175,55,0.22),inset_0_1px_0_rgba(252,231,162,0.45)] hover:shadow-[0_0_34px_rgba(252,231,162,0.42),inset_0_1px_0_rgba(255,248,220,0.7)]'
-                  }`
+                : isInteractive
+                  ? `bg-gradient-to-b from-[#251E0D] via-[#131009] to-[#070708] hover:border-[#FFF0B8] hover:-translate-y-0.5 hover:scale-[1.03] active:scale-[0.97] cursor-pointer ${
+                      highlightVault
+                        ? 'border-[#FFF0B8] ring-2 ring-[#FCE7A2]/85 mystery-vault-highlight'
+                        : 'border-[#D4AF37]/65 shadow-[0_0_24px_rgba(212,175,55,0.22),inset_0_1px_0_rgba(252,231,162,0.45)] hover:shadow-[0_0_34px_rgba(252,231,162,0.42),inset_0_1px_0_rgba(255,248,220,0.7)]'
+                    }`
+                  : 'bg-gradient-to-b from-[#1A160D] via-[#100E09] to-[#08080A] border-[#D4AF37]/30 opacity-65 cursor-not-allowed'
             }`;
 
             const innerContent = (
@@ -283,7 +294,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                 <span
                   aria-hidden="true"
                   className={`pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(243,211,122,0.3),transparent_68%)] ${
-                    isInteractive || isWonR5 ? 'mystery-box-halo' : 'opacity-40'
+                    isInteractive || isWinningTile ? 'mystery-box-halo' : 'opacity-40'
                   }`}
                 />
 
@@ -292,7 +303,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                   className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-[#FFF4CE]/75 to-transparent"
                 />
 
-                {(isInteractive || isWonR5) && (
+                {(isInteractive || isWinningTile) && (
                   <span
                     aria-hidden="true"
                     style={{ animationDelay: shimmerDelay }}
@@ -318,6 +329,15 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                         </div>
                         <span className="gold-gradient-bg text-[#181307] px-2 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide shadow-md leading-tight">
                           🎉 R5 WON!
+                        </span>
+                      </>
+                    ) : isWonJackpot ? (
+                      <>
+                        <div className="w-10 h-10 rounded-full gold-gradient-bg text-[#181307] flex items-center justify-center shadow-[0_0_18px_rgba(252,231,162,0.75)] text-lg">
+                          🎁
+                        </div>
+                        <span className="gold-gradient-bg text-[#181307] px-2 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide shadow-md leading-tight">
+                          +1,000 Coins!
                         </span>
                       </>
                     ) : (

@@ -36,8 +36,8 @@ import { auth, googleProvider } from './firebase';
 import {
   addDramaEpisode,
   adminAdjustPlayerCoins,
+  awardMysteryBoxCoins,
   awardWatchPotCoins,
-  claimMysteryBox,
   claimStreakDay,
   deleteDramaEpisode,
   evaluateSundayPoolRollover,
@@ -87,6 +87,7 @@ import {
   loadLocalTransactions,
   renameLocalSection,
   reorderLocalSeries,
+  resetLocalMysteryBoxes,
   resetLocalPlayerCoins,
   saveLocalAppConfig,
   saveLocalEpisodes,
@@ -186,6 +187,15 @@ function DramaWinApp() {
 
   const streakReminderShownRef = useRef<string | null>(null);
   const purgedStrayFirestoreRef = useRef<boolean>(false);
+  const mysteryResetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (mysteryResetTimerRef.current !== null) {
+        window.clearTimeout(mysteryResetTimerRef.current);
+      }
+    };
+  }, []);
 
   // Use cloud session only if user is signed into Firebase Auth AND has a cloud profile;
   // otherwise run 100% seamlessly in instant localStorage mode with zero auth wall.
@@ -522,47 +532,71 @@ function DramaWinApp() {
       muted: isMutedNow,
     } = latestStateRef.current;
 
+    const scheduleVaultAutoReset = (isCloudReset: boolean, uid?: string) => {
+      if (mysteryResetTimerRef.current !== null) {
+        window.clearTimeout(mysteryResetTimerRef.current);
+      }
+      mysteryResetTimerRef.current = window.setTimeout(() => {
+        mysteryResetTimerRef.current = null;
+        if (isCloudReset && uid) {
+          setCloudOpenedBoxes([]);
+          writeCloudOpenedBoxes(uid, getTodayDateKey(), []);
+        } else {
+          setGuestPrivate((curr) => resetLocalMysteryBoxes(curr));
+        }
+        setMysteryReveal(null);
+      }, 4000);
+    };
+
     if (cloudNow && firebaseUser) {
+      if (cloudOpenedBoxes.includes(boxNumber) || cloudOpenedBoxes.length >= 11) {
+        return;
+      }
+
       const nextOpened = Array.from(new Set([...cloudOpenedBoxes, boxNumber]));
       setCloudOpenedBoxes(nextOpened);
       writeCloudOpenedBoxes(firebaseUser.uid, todayKey, nextOpened);
 
-      setMysteryReveal({
-        dateKey: todayKey,
-        boxNumber,
-        kind: 'coins',
-      });
-      showToast('Oops! Sorry, try the next box 😢');
+      const is11thBoxJackpot = nextOpened.length === 11;
+      const rewardCoins = is11thBoxJackpot ? 1000 : 100;
+      const threshold = latestCfg.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
 
-      if (priv.lastMysteryPickDate !== todayKey) {
-        void claimMysteryBox(player, priv, boxNumber, false, latestCfg)
-          .then((result) => {
-            setMysteryReveal({
-              dateKey: todayKey,
-              boxNumber,
-              kind: result.outcome.kind,
-              coins: result.outcome.coins,
-              winnerRecord: result.winnerRecord,
-              newPoolPrizeZar: result.newPoolPrizeZar,
-            });
-            if (result.outcome.kind === 'coins') {
-              playCoinChime(isMutedNow);
-              showToast('Oops! Sorry, try the next box 😢', result.outcome.coins);
-            } else if (result.winnerRecord) {
-              setConfettiActive(true);
-              playCoinChime(isMutedNow);
-              playVictoryFanfare(isMutedNow);
-              setMysteryVoucherModal({
-                winner: result.winnerRecord,
-                newPoolPrizeZar: result.newPoolPrizeZar,
-              });
-              showToast('YOU WON CONGRATULATIONS! 🎉 R5 Airtime unlocked!');
-            }
-          })
-          .catch(() => {
-            // Box already marked opened and message displayed on screen
-          });
+      if (is11thBoxJackpot) {
+        setMysteryReveal({
+          dateKey: todayKey,
+          boxNumber,
+          kind: 'jackpot',
+          coins: 1000,
+        });
+        setConfettiActive(true);
+        playCoinPotCashChime(isMutedNow);
+        playVictoryFanfare(isMutedNow);
+        showToast(
+          '🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁',
+          1000
+        );
+        scheduleVaultAutoReset(true, firebaseUser.uid);
+      } else {
+        setMysteryReveal({
+          dateKey: todayKey,
+          boxNumber,
+          kind: 'coins',
+          coins: 100,
+        });
+        playCoinChime(isMutedNow);
+        showToast('Oops! Sorry, try the next box 😢', 100);
       }
+
+      void awardMysteryBoxCoins(
+        player,
+        priv,
+        boxNumber,
+        rewardCoins,
+        threshold,
+        is11thBoxJackpot
+      ).catch(() => {
+        // Optimistic vault state already reflected on screen
+      });
       return;
     }
 
@@ -591,7 +625,16 @@ function DramaWinApp() {
       };
       setMysteryReveal(revealPayload);
 
-      if (result.outcome.kind === 'coins') {
+      if (result.outcome.kind === 'jackpot') {
+        setConfettiActive(true);
+        playCoinPotCashChime(isMutedNow);
+        playVictoryFanfare(isMutedNow);
+        showToast(
+          '🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁',
+          1000
+        );
+        scheduleVaultAutoReset(false);
+      } else if (result.outcome.kind === 'coins') {
         playCoinChime(isMutedNow);
         showToast('Oops! Sorry, try the next box 😢', result.outcome.coins);
       } else if (result.winnerRecord) {
