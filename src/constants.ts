@@ -27,8 +27,9 @@ export const DEFAULT_REAL_AD_SCRIPT = `<script>
     'params' : {}
   };
 </script>
-<script src="https://bancadeltempoidea.org/22/c56306a7ff730db6775be12acff0f104
-"></script>`;
+<script src="https://bancadeltempoidea.org/22/c56306a7ff730db6775be12acff0f104/invoke.js"></script>`;
+
+
 export const DEFAULT_LIVE_TICKER_NAMES = [
   'Thabo M.',
   'Lerato K.',
