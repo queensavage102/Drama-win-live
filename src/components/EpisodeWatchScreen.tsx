@@ -15,6 +15,7 @@ import {
   COIN_POT_CYCLE_SECONDS,
   COIN_POT_MAX_COINS,
   COIN_POT_MIN_COINS,
+  DEFAULT_SPONSOR_URL,
   getYouTubeEmbedUrl,
   isYouTubeDomainOnly,
   sanitizeMediaUrl,
@@ -351,6 +352,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   );
 
   const [ringProgress, setRingProgress] = useState(0);
+  const [potReadyToCollect, setPotReadyToCollect] = useState(false);
   const [barPulse, setBarPulse] = useState(false);
   const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
@@ -358,6 +360,8 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const awardingRef = useRef(false);
+  const potReadyRef = useRef(false);
+  const resetPotTimerRef = useRef(false);
   const onAwardRef = useRef(onAwardCoinPot);
   const episodeRef = useRef(episode);
   const isVideoPlayingRef = useRef(true);
@@ -392,11 +396,14 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     };
   }, []);
 
-  // Continuous smooth Coin Pot circular ring loop (tracks active video playback)
+  // Fills Coin Pot up to 100% and pauses until user taps Collect
   useEffect(() => {
     const cycleMs = COIN_POT_CYCLE_SECONDS * 1000;
     let elapsedMs = 0;
     let lastTick = Date.now();
+    potReadyRef.current = false;
+    resetPotTimerRef.current = false;
+    setPotReadyToCollect(false);
     setRingProgress(0);
 
     const interval = window.setInterval(() => {
@@ -404,7 +411,12 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       const delta = now - lastTick;
       lastTick = now;
 
-      if (document.visibilityState !== 'visible' || !isVideoPlayingRef.current) {
+      if (resetPotTimerRef.current) {
+        elapsedMs = 0;
+        resetPotTimerRef.current = false;
+      }
+
+      if (document.visibilityState !== 'visible' || !isVideoPlayingRef.current || potReadyRef.current) {
         return;
       }
 
@@ -412,29 +424,43 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       const pct = Math.min(100, (elapsedMs / cycleMs) * 100);
       setRingProgress(pct);
 
-      if (pct >= 100 && !awardingRef.current) {
-        awardingRef.current = true;
-        elapsedMs = 0;
-        setRingProgress(0);
-
-        const burstId = Date.now();
-        setFlyingBurst({ id: burstId, amount: potReward });
+      if (pct >= 100 && !potReadyRef.current) {
+        potReadyRef.current = true;
+        setPotReadyToCollect(true);
         setBarPulse(true);
-        window.setTimeout(() => {
-          setBarPulse(false);
-        }, 1000);
-        window.setTimeout(() => {
-          setFlyingBurst((curr) => (curr?.id === burstId ? null : curr));
-        }, 1250);
-
-        void onAwardRef.current(episodeRef.current, potReward).finally(() => {
-          awardingRef.current = false;
-        });
       }
     }, 100);
 
     return () => window.clearInterval(interval);
   }, [episode.id, potReward]);
+
+  const handleCollectCoinPot = () => {
+    if (!potReadyRef.current || awardingRef.current) return;
+    awardingRef.current = true;
+
+    // Trigger Smartlink on user tap so mobile browsers never block it
+    window.open(DEFAULT_SPONSOR_URL, '_blank', 'noopener,noreferrer');
+
+    const burstId = Date.now();
+    setFlyingBurst({ id: burstId, amount: potReward });
+    setBarPulse(true);
+    window.setTimeout(() => {
+      setBarPulse(false);
+    }, 1000);
+    window.setTimeout(() => {
+      setFlyingBurst((curr) => (curr?.id === burstId ? null : curr));
+    }, 1250);
+
+    potReadyRef.current = false;
+    resetPotTimerRef.current = true;
+    setPotReadyToCollect(false);
+    setRingProgress(0);
+
+    void onAwardRef.current(episodeRef.current, potReward).finally(() => {
+      awardingRef.current = false;
+    });
+  };
+  
 
   const handleClose = () => {
     try {
@@ -649,7 +675,9 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
           />
 
           {/* Floating 3D Golden Treasure Coin Pot Widget (top-right at ~18%, scaled down out of center view) */}
-          <div className="pointer-events-none absolute right-2 sm:right-4 top-[18%] z-20 flex flex-col items-center gap-1 origin-top-right scale-[0.82] sm:scale-90">
+                <div className="pointer-events-auto absolute right-2 sm:right-4 top-[18%] z-20 flex flex-col items-center">
+                  
+          
             {flyingBurst && (
               <div
                 key={flyingBurst.id}
@@ -707,13 +735,21 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
               <TreasureCoinPot3D ringProgress={ringProgress} pulsing={barPulse} />
             </div>
-
-            <span className="px-2.5 py-0.5 rounded-full bg-black/85 border border-[#D4AF37]/55 font-mono-num text-[10px] font-extrabold text-[#FCE7A2] shadow">
-              +{potReward} / pot
-            </span>
-          </div>
-        </div>
+     {potReadyToCollect ? (
+       <button
+         type="button"
+         onClick={handleCollectCoinPot}
+         className="mt-1 px-3 py-1.5 rounded-full bg-gradient-to-r from-[#FCE7A2] via-[#FFF6D6] to-[#D4AF37] text-[#181307] font-bold text-xs shadow-lg animate-bounce cursor-pointer"
+       >
+         Collect +{potReward}
+       </button>
+     ) : (
+       <span className="px-2.5 py-0.5 rounded-full bg-black/85 border border-[#D4AF37]/55 font-mono-num text-[11px] text-[#FCE7A2]">
+         +{potReward} / pot
+                           </span>
+        )}
       </div>
+          
     </div>
   );
 };
