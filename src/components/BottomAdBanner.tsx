@@ -35,21 +35,26 @@ export const BottomAdBanner: React.FC = () => {
   return (
     <div
       style={{ backgroundColor: '#09090b', colorScheme: 'dark' }}
-      className="relative w-[320px] h-[50px] mx-auto overflow-hidden flex items-center justify-center"
+      className="w-full py-1.5 bg-[#09090b] border-t border-white/10 flex items-center justify-center relative z-[80]"
     >
-      <span className="text-[10px] text-zinc-600 absolute inset-0 flex items-center justify-center pointer-events-none">
-        Sponsored Ad
-      </span>
-      <iframe
-        title="ad-banner"
-        width="320"
-        height="50"
-        scrolling="no"
-        frameBorder="0"
-        srcDoc={AD_SRC_DOC}
+      <div
         style={{ backgroundColor: '#09090b', colorScheme: 'dark' }}
-        className="relative z-10 w-[320px] h-[50px] border-0 block"
-      />
+        className="relative w-[320px] h-[50px] overflow-hidden flex items-center justify-center rounded"
+      >
+        <span className="text-[10px] text-zinc-600 absolute inset-0 flex items-center justify-center pointer-events-none">
+          Sponsored Ad
+        </span>
+        <iframe
+          title="ad-banner"
+          width="320"
+          height="50"
+          scrolling="no"
+          frameBorder="0"
+          srcDoc={AD_SRC_DOC}
+          style={{ backgroundColor: '#09090b', colorScheme: 'dark' }}
+          className="relative z-10 w-[320px] h-[50px] border-0 block"
+        />
+      </div>
     </div>
   );
 };
