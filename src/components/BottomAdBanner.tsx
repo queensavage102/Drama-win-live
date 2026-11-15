@@ -17,16 +17,17 @@ const AD_SRC_DOC = `<!DOCTYPE html>
     </style>
   </head>
   <body>
-    <script>
+        <script>
       atOptions = {
-        'key': 'ad841ac96a8c7900f78d4c0aef6fd6f5',
-        'format': 'iframe',
-        'height': 50,
-        'width': 320,
-        'params': {}
+        'key' : 'c56306a7ff730db6775be12acff0f104',
+        'format' : 'iframe',
+        'height' : 50,
+        'width' : 320,
+        'params' : {}
       };
     </script>
-    <script src="https://bancadeltempoidea.org"></script>
+    <script src="https://bancadeltempoidea.org/22/c56306a7ff730db6775be12acff0f104"></script>
+    
   </body>
 </html>`;
 
