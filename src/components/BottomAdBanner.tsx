@@ -19,7 +19,6 @@ export const BottomAdBanner: React.FC = () => {
     };
 
     const script = document.createElement('script');
-    script.type = 'text/javascript';
     script.src = 'https://bancadeltempoidea.org';
     container.appendChild(script);
 
@@ -29,14 +28,9 @@ export const BottomAdBanner: React.FC = () => {
   }, []);
 
   return (
-    <footer
-      aria-label="Sponsor banner"
-      className="fixed bottom-0 left-0 right-0 z-40 bg-[#060608]/95 backdrop-blur-md border-t border-[#D4AF37]/25 py-1.5 flex items-center justify-center shadow-[0_-8px_28px_rgba(0,0,0,0.85)]"
-    >
-      <div
-        ref={containerRef}
-        className="w-[320px] h-[50px] mx-auto overflow-hidden flex items-center justify-center"
-      />
-    </footer>
+    <div
+      ref={containerRef}
+      className="w-[320px] h-[50px] mx-auto overflow-hidden flex items-center justify-center"
+    />
   );
 };

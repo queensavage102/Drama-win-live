@@ -1175,7 +1175,7 @@ function DramaWinApp() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070709] text-[#F6F2E9] pb-20">
+    <div className="min-h-screen bg-[#070709] text-[#F6F2E9] pb-16">
       {!splashDone && <VipSplashScreen onComplete={() => setSplashDone(true)} />}
 
       <ConfettiExplosion
@@ -1326,7 +1326,9 @@ function DramaWinApp() {
       </main>
 
       {/* Fixed 320x50 Bottom Ad Banner */}
-      <BottomAdBanner />
+      <div className="fixed bottom-0 left-0 right-0 z-50 flex justify-center items-center bg-black/95 py-1 border-t border-yellow-500/20">
+        <BottomAdBanner />
+      </div>
     </div>
   );
 }
