@@ -1,0 +1,299 @@
+{
+  "entities": {
+    "LeaderboardPlayer": {
+      "title": "LeaderboardPlayer",
+      "description": "Public player profile and weekly coin ranking entry (contains zero PII).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the player."
+        },
+        "username": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32,
+          "description": "Public display username."
+        },
+        "coins": {
+          "type": "number",
+          "description": "Total lifetime coin balance."
+        },
+        "weeklyCoins": {
+          "type": "number",
+          "description": "Coins earned during the current Sunday pool week."
+        },
+        "qualified": {
+          "type": "boolean",
+          "description": "Whether the player meets the weekly qualification threshold."
+        },
+        "streakCount": {
+          "type": "number",
+          "description": "Number of daily check-in days claimed this week (0-7)."
+        },
+        "sundayBonusZar": {
+          "type": "number",
+          "description": "Cumulative Rand airtime balance awarded from Top 3 Sunday Pool payouts."
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Explicit visibility flag for public leaderboard queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "username",
+        "coins",
+        "weeklyCoins",
+        "qualified",
+        "streakCount",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PlayerPrivate": {
+      "title": "PlayerPrivate",
+      "description": "Isolated private player contact details, reward claims, and Mystery Vault state.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "contact": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 120
+        },
+        "dailyGiftLastClaimed": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "weekKey": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "claimedDays": {
+          "type": "array"
+        },
+        "watchedEpisodeIds": {
+          "type": "array"
+        },
+        "lastKeepWatchingDate": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "lastBannerClaimAt": {
+          "type": "number"
+        },
+        "lastActivityDate": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "lastMysteryPickDate": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "contact",
+        "dailyGiftLastClaimed",
+        "weekKey",
+        "claimedDays",
+        "watchedEpisodeIds",
+        "lastKeepWatchingDate",
+        "lastBannerClaimAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Episode": {
+      "title": "Episode",
+      "description": "Featured short-drama episode catalog item.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "series": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "episodeLabel": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "duration": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "rewardCoins": { "type": "number" },
+        "coverImage": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "synopsis": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "sponsorUrl": { "type": "string", "maxLength": 500 },
+        "youtubeUrl": { "type": "string", "maxLength": 500 },
+        "sortOrder": { "type": "number" },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "title",
+        "series",
+        "episodeLabel",
+        "duration",
+        "rewardCoins",
+        "coverImage",
+        "synopsis",
+        "sponsorUrl",
+        "sortOrder",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Global application sponsor URL, embedded ad script, Mystery Vault, and Sunday Pool rollover configuration.",
+      "type": "object",
+      "properties": {
+        "sponsorAdUrl": { "type": "string", "minLength": 8, "maxLength": 500 },
+        "embeddedAdHtml": { "type": "string", "maxLength": 8000 },
+        "poolPrizeZar": { "type": "number" },
+        "rolloverAmountZar": { "type": "number" },
+        "poolWeekKey": { "type": "string", "maxLength": 16 },
+        "weekStartTimestamp": { "type": "number", "description": "Epoch ms of Monday 00:00 Africa/Johannesburg for active weekly cycle." },
+        "lastPoolWinnerSummary": { "type": "string", "maxLength": 300 },
+        "lastWinnerUids": { "type": "array" },
+        "mysteryWinningBoxes": { "type": "number" },
+        "r5WinnerUsername": { "type": "string", "maxLength": 32 },
+        "nextPickWinsR5": { "type": "boolean" },
+        "liveTickerEnabled": { "type": "boolean" },
+        "liveTickerNames": { "type": "array" },
+        "poolTargetCoins": { "type": "number" },
+        "qualificationThreshold": { "type": "number" },
+        "episodesSeeded": { "type": "boolean" },
+        "isPublic": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "sponsorAdUrl",
+        "poolPrizeZar",
+        "poolTargetCoins",
+        "qualificationThreshold",
+        "episodesSeeded",
+        "isPublic",
+        "updatedAt"
+      ]
+    },
+    "MysteryWinner": {
+      "title": "MysteryWinner",
+      "description": "R5 Airtime Mystery Vault winner record (contains player contact PII, restricted to owner and admin).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "contact": { "type": "string", "minLength": 4, "maxLength": 120 },
+        "voucherCode": { "type": "string", "minLength": 4, "maxLength": 32 },
+        "amountZar": { "type": "number" },
+        "boxNumber": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "username",
+        "contact",
+        "voucherCode",
+        "amountZar",
+        "boxNumber",
+        "createdAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Authorized admin studio operator document.",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["admin"] },
+        "passcode": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["role", "passcode", "createdAt"]
+    },
+    "CoinTransaction": {
+      "title": "CoinTransaction",
+      "description": "Chronological ledger entry of coin earnings or expenditures for a player.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "type": { "type": "string", "enum": ["earn", "spend", "adjustment"] },
+        "category": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "amount": { "type": "number" },
+        "balanceAfter": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "type",
+        "category",
+        "title",
+        "amount",
+        "balanceAfter",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/leaderboard/{playerId}": {
+      "schema": { "$ref": "#/entities/LeaderboardPlayer" },
+      "description": "Public weekly leaderboard entries sorted by weeklyCoins."
+    },
+    "/playerPrivate/{playerId}": {
+      "schema": { "$ref": "#/entities/PlayerPrivate" },
+      "description": "Private PII (email/WhatsApp) and reward claim state per player."
+    },
+    "/playerPrivate/{playerId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/CoinTransaction" },
+      "description": "Private chronological coin earnings and expenditure log for a player."
+    },
+    "/episodes/{episodeId}": {
+      "schema": { "$ref": "#/entities/Episode" },
+      "description": "Featured short-drama episodes managed via Admin Studio."
+    },
+    "/appConfig/{configId}": {
+      "schema": { "$ref": "#/entities/AppConfig" },
+      "description": "Global sponsor ad URL, embedded ad slot HTML, Mystery Vault settings, and Sunday pool rollover state."
+    },
+    "/mysteryWinners/{winnerId}": {
+      "schema": { "$ref": "#/entities/MysteryWinner" },
+      "description": "Log of R5 Airtime Mystery Vault winners."
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Admin Studio access grants."
+    }
+  }
+}
