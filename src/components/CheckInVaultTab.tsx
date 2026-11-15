@@ -10,26 +10,24 @@ import { MysteryRevealState, MysteryVaultCard } from './MysteryVaultCard';
 
 interface CheckInVaultTabProps {
   privateState: PlayerPrivate;
-  sponsorAdUrl: string;
-  pendingMysteryBoxNumber: number | null;
+  openedBoxesOverride?: number[];
   mysteryReveal: MysteryRevealState | null;
   voucherModal: {
     winner: MysteryWinnerRecord;
     newPoolPrizeZar?: number;
   } | null;
   onCompleteCheckIn: (dayKey: WeekDayKey, rewardCoins: number) => Promise<void>;
-  onStartMysteryBoxSponsor: (boxNumber: number, paidWithCoins: boolean) => void;
+  onOpenMysteryBox: (boxNumber: number) => void;
   onDismissVoucherModal: () => void;
 }
 
 export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
   privateState,
-  sponsorAdUrl,
-  pendingMysteryBoxNumber,
+  openedBoxesOverride,
   mysteryReveal,
   voucherModal,
   onCompleteCheckIn,
-  onStartMysteryBoxSponsor,
+  onOpenMysteryBox,
   onDismissVoucherModal,
 }) => {
   const todayKey = getTodayDateKey();
@@ -45,12 +43,11 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
       {/* 12 Secret Mystery Vault Gift Boxes */}
       <MysteryVaultCard
         privateState={privateState}
-        sponsorAdUrl={sponsorAdUrl}
         todayKey={todayKey}
-        pendingMysteryBoxNumber={pendingMysteryBoxNumber}
+        openedBoxesOverride={openedBoxesOverride}
         mysteryReveal={mysteryReveal}
         voucherModal={voucherModal}
-        onStartMysteryBoxSponsor={onStartMysteryBoxSponsor}
+        onOpenMysteryBox={onOpenMysteryBox}
         onDismissVoucherModal={onDismissVoucherModal}
       />
     </div>

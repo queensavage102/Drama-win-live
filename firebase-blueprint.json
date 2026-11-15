@@ -137,6 +137,8 @@
       "properties": {
         "title": { "type": "string", "minLength": 1, "maxLength": 100 },
         "series": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "seriesId": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 32 },
         "episodeLabel": { "type": "string", "minLength": 1, "maxLength": 24 },
         "duration": { "type": "string", "minLength": 1, "maxLength": 16 },
         "rewardCoins": { "type": "number" },

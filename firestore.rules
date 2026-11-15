@@ -74,9 +74,11 @@ service cloud.firestore {
 
     function isValidEpisode(data) {
       return data.keys().hasAll(['title', 'series', 'episodeLabel', 'duration', 'rewardCoins', 'coverImage', 'synopsis', 'sponsorUrl', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['title', 'series', 'episodeLabel', 'duration', 'rewardCoins', 'coverImage', 'synopsis', 'sponsorUrl', 'youtubeUrl', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'series', 'seriesId', 'category', 'episodeLabel', 'duration', 'rewardCoins', 'coverImage', 'synopsis', 'sponsorUrl', 'youtubeUrl', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
         && data.series is string && data.series.size() >= 1 && data.series.size() <= 60
+        && (!('seriesId' in data) || (data.seriesId is string && data.seriesId.size() >= 1 && data.seriesId.size() <= 80))
+        && (!('category' in data) || (data.category is string && data.category.size() >= 1 && data.category.size() <= 32))
         && data.episodeLabel is string && data.episodeLabel.size() >= 1 && data.episodeLabel.size() <= 24
         && data.duration is string && data.duration.size() >= 1 && data.duration.size() <= 16
         && data.rewardCoins is number && data.rewardCoins >= 1 && data.rewardCoins <= 5000

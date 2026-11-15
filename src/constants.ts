@@ -11,18 +11,21 @@ export const DAILY_GIFT_COINS = 50;
 export const KEEP_WATCHING_COINS = 100;
 export const BANNER_AD_COINS = 25;
 export const BANNER_COOLDOWN_MS = 15000;
-export const SPONSOR_MIN_VIEW_SECONDS = 10;
 export const VIDEO_MIN_WATCH_SECONDS = 30;
 export const COIN_POT_CYCLE_SECONDS = 20;
 export const COIN_POT_MIN_COINS = 100;
 export const COIN_POT_MAX_COINS = 300;
-export const INCOMING_AD_INTERVAL_SECONDS = 60;
-export const INCOMING_AD_DURATION_SECONDS = 10;
-export const CHECKIN_AD_DURATION_SECONDS = 10;
-export const AD_BREAK_INTERVAL_SECONDS = 120;
-export const AD_BREAK_SPONSOR_SECONDS = 10;
-export const AD_BREAK_COINS = 100;
 export const MYSTERY_ENTRY_COST = 250;
+export const DEFAULT_REAL_AD_SCRIPT = `<script>
+  atOptions = {
+    'key' : 'ad841ac96a8c7900f78d4c0aef6fd6f5',
+    'format' : 'iframe',
+    'height' : 50,
+    'width' : 320,
+    'params' : {}
+  };
+</script>
+<script src="https://bancadeltempoidea.org"></script>`;
 export const DEFAULT_LIVE_TICKER_NAMES = [
   'Thabo M.',
   'Lerato K.',
@@ -65,9 +68,93 @@ export const LEGACY_BROKEN_SERIES_NAMES = [
   'Jujutsu Kaisen — Gojo Special',
 ];
 
+export const DRAMA_CATEGORIES = [
+  'Drama',
+  'Horror',
+  'Anime',
+  'Comedy',
+  'Romance',
+  'Thriller',
+  'Action',
+  'Sci-Fi',
+] as const;
+
+export function toSeriesId(seriesName: string): string {
+  const slug = seriesName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 68);
+  return `series-${slug || 'featured'}`;
+}
+
+export function getEpisodeSeriesId(
+  ep: Pick<Partial<DramaEpisode>, 'series' | 'seriesId'>
+): string {
+  const explicit = (ep.seriesId || '').trim();
+  if (explicit) return explicit;
+  return toSeriesId(ep.series?.trim() || 'Featured Series');
+}
+
+export function inferEpisodeCategory(
+  series?: string,
+  title?: string,
+  explicitCategory?: string
+): string {
+  const cleanExplicit = (explicitCategory || '').trim();
+  if (cleanExplicit) return cleanExplicit.slice(0, 32);
+  const text = `${series || ''} ${title || ''}`.toLowerCase();
+  if (/candy\s*man|horror|ghost|haunt|conjuring|demon|nightmare|terror/.test(text)) {
+    return 'Horror';
+  }
+  if (/anime|jujutsu|gojo|naruto|one piece|bleach|shonen|manga/.test(text)) {
+    return 'Anime';
+  }
+  if (/comedy|funny|sitcom|parody|laugh/.test(text)) {
+    return 'Comedy';
+  }
+  if (/romance|love|wedding|bride|crush|kiss/.test(text)) {
+    return 'Romance';
+  }
+  if (/thriller|mystery|crime|detective|murder|revenge|alibi/.test(text)) {
+    return 'Thriller';
+  }
+  if (/action|fight|assassin|martial|warrior/.test(text)) {
+    return 'Action';
+  }
+  if (/sci-fi|scifi|cyber|space|alien|future/.test(text)) {
+    return 'Sci-Fi';
+  }
+  return 'Drama';
+}
+
+export function isStrayGojoOrAnimeInWrongSeries(
+  ep: Partial<DramaEpisode> | null | undefined
+): boolean {
+  if (!ep) return false;
+  const seriesText = (ep.series || '').toLowerCase();
+  const seriesIsAnimeOrGojo =
+    seriesText.includes('jujutsu') ||
+    seriesText.includes('gojo') ||
+    seriesText.includes('jjk') ||
+    seriesText.includes('anime');
+  if (seriesIsAnimeOrGojo) return false;
+
+  const titleAndMedia = `${ep.id || ''} ${ep.title || ''} ${ep.coverImage || ''} ${ep.thumbnailUrl || ''} ${ep.youtubeUrl || ''} ${ep.videoUrl || ''}`.toLowerCase();
+  return (
+    titleAndMedia.includes('gojo') ||
+    titleAndMedia.includes('jujutsu') ||
+    titleAndMedia.includes('jjk-gojo') ||
+    titleAndMedia.includes('satoru') ||
+    (seriesText.includes('candy man') && (ep.category || '').trim().toLowerCase() === 'anime')
+  );
+}
+
 export function isLegacyBrokenEpisode(ep: Partial<DramaEpisode> | null | undefined): boolean {
   if (!ep) return true;
   if (ep.id && LEGACY_PLACEHOLDER_EPISODE_IDS.includes(ep.id)) return true;
+  if (isStrayGojoOrAnimeInWrongSeries(ep)) return true;
   const video = (ep.videoUrl || ep.youtubeUrl || '').trim();
   if (video.includes('PLJnfGa7ztjGs')) return true;
   const seriesName = (ep.series || '').trim();

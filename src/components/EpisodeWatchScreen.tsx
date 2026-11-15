@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ExternalLink,
   Film,
   Maximize2,
   Minimize2,
@@ -17,13 +16,11 @@ import {
   COIN_POT_MAX_COINS,
   COIN_POT_MIN_COINS,
   getYouTubeEmbedUrl,
-  getYouTubeWatchUrl,
   isYouTubeDomainOnly,
   sanitizeMediaUrl,
 } from '../constants';
 import { DramaEpisode } from '../types';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
-import { BottomAdBanner } from './BottomAdBanner';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 interface EpisodeWatchScreenProps {
@@ -32,10 +29,9 @@ interface EpisodeWatchScreenProps {
   playerTotalCoins: number;
   qualificationThreshold: number;
   muted: boolean;
-  adPaused?: boolean;
-  embeddedAdHtml?: string;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
+  onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
   onClose: () => void;
 }
 
@@ -185,8 +181,9 @@ const isDirectVideoMediaUrl = (url: string): boolean => {
 const WatchVideoStage: React.FC<{
   episode: DramaEpisode;
   zoomed: boolean;
-  adPaused: boolean;
-}> = ({ episode, zoomed, adPaused }) => {
+  onPlayingChange?: (playing: boolean) => void;
+  onVideoEnded?: () => void;
+}> = ({ episode, zoomed, onPlayingChange, onVideoEnded }) => {
   const rawVideoUrl = sanitizeMediaUrl((episode.videoUrl || episode.youtubeUrl || '').trim());
   const embedUrl = rawVideoUrl ? getYouTubeEmbedUrl(rawVideoUrl) : null;
   const bareYouTubeDomain = rawVideoUrl ? isYouTubeDomainOnly(rawVideoUrl) : false;
@@ -194,37 +191,70 @@ const WatchVideoStage: React.FC<{
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const pausedByAdRef = useRef(false);
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  const onVideoEndedRef = useRef(onVideoEnded);
 
   useEffect(() => {
-    if (adPaused) {
-      pausedByAdRef.current = true;
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"pauseVideo","args":""}',
-        '*'
-      );
-      if (videoRef.current && !videoRef.current.paused) {
-        videoRef.current.pause();
+    onPlayingChangeRef.current = onPlayingChange;
+  }, [onPlayingChange]);
+
+  useEffect(() => {
+    onVideoEndedRef.current = onVideoEnded;
+  }, [onVideoEnded]);
+
+  useEffect(() => {
+    if (!embedUrl && !resolvedMediaUrl) return;
+    const handleMessage = (event: MessageEvent) => {
+      if (
+        typeof event.origin === 'string' &&
+        !event.origin.includes('youtube.com') &&
+        !event.origin.includes('youtube-nocookie.com')
+      ) {
+        return;
       }
-    } else if (pausedByAdRef.current) {
-      pausedByAdRef.current = false;
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"playVideo","args":""}',
-        '*'
-      );
-      if (videoRef.current) {
-        void videoRef.current.play().catch(() => {});
+      let payload: { event?: string; info?: unknown } | null = null;
+      if (typeof event.data === 'string') {
+        try {
+          payload = JSON.parse(event.data) as { event?: string; info?: unknown };
+        } catch {
+          return;
+        }
+      } else if (event.data && typeof event.data === 'object') {
+        payload = event.data as { event?: string; info?: unknown };
       }
-    }
-  }, [adPaused]);
+      if (!payload) return;
+
+      const playerState =
+        typeof payload.info === 'number'
+          ? payload.info
+          : payload.info &&
+              typeof payload.info === 'object' &&
+              typeof (payload.info as { playerState?: unknown }).playerState === 'number'
+            ? (payload.info as { playerState: number }).playerState
+            : null;
+
+      if (playerState === 1) {
+        onPlayingChangeRef.current?.(true);
+      } else if (playerState === 2) {
+        onPlayingChangeRef.current?.(false);
+      } else if (playerState === 0) {
+        onPlayingChangeRef.current?.(false);
+        onVideoEndedRef.current?.();
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [embedUrl, resolvedMediaUrl]);
 
   const handleIframeLoad = () => {
-    if (adPaused) {
-      pausedByAdRef.current = true;
+    try {
       iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"pauseVideo","args":""}',
+        '{"event":"listening","id":"dramawin-watch-player"}',
         '*'
       );
+    } catch {
+      // Ignore cross-origin postMessage restrictions
     }
   };
 
@@ -254,8 +284,14 @@ const WatchVideoStage: React.FC<{
           key={`${episode.id}-${resolvedMediaUrl}`}
           src={resolvedMediaUrl}
           controls
-          autoPlay={!adPaused}
+          autoPlay
           playsInline
+          onPlay={() => onPlayingChangeRef.current?.(true)}
+          onPause={() => onPlayingChangeRef.current?.(false)}
+          onEnded={() => {
+            onPlayingChangeRef.current?.(false);
+            onVideoEndedRef.current?.();
+          }}
           className={`absolute inset-0 w-full h-full bg-black transition-transform duration-300 ease-out origin-center ${
             zoomed ? 'object-cover scale-[1.35]' : 'object-contain scale-100'
           }`}
@@ -304,23 +340,15 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   playerTotalCoins,
   qualificationThreshold,
   muted,
-  adPaused = false,
-  embeddedAdHtml = '',
   onToggleMute,
   onAwardCoinPot,
+  onMarkEpisodeWatched,
   onClose,
 }) => {
   const potReward = Math.max(
     COIN_POT_MIN_COINS,
     Math.min(COIN_POT_MAX_COINS, Math.round(episode.rewardCoins || COIN_POT_MIN_COINS))
   );
-  const rawEpisodeVideoUrl = sanitizeMediaUrl((episode.videoUrl || episode.youtubeUrl || '').trim());
-  const youtubeWatchFallbackUrl = rawEpisodeVideoUrl
-    ? getYouTubeWatchUrl(rawEpisodeVideoUrl) ||
-      (/^https?:\/\//i.test(rawEpisodeVideoUrl) && /youtube|youtu\.be/i.test(rawEpisodeVideoUrl)
-        ? rawEpisodeVideoUrl
-        : null)
-    : null;
 
   const [ringProgress, setRingProgress] = useState(0);
   const [barPulse, setBarPulse] = useState(false);
@@ -332,11 +360,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const awardingRef = useRef(false);
   const onAwardRef = useRef(onAwardCoinPot);
   const episodeRef = useRef(episode);
-  const adPausedRef = useRef(adPaused);
-
-  useEffect(() => {
-    adPausedRef.current = adPaused;
-  }, [adPaused]);
+  const isVideoPlayingRef = useRef(true);
 
   useEffect(() => {
     onAwardRef.current = onAwardCoinPot;
@@ -344,6 +368,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
   useEffect(() => {
     episodeRef.current = episode;
+    isVideoPlayingRef.current = true;
   }, [episode]);
 
   useEffect(() => {
@@ -367,7 +392,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     };
   }, []);
 
-  // Continuous smooth Coin Pot circular ring loop (auto-pauses cleanly during ad breaks)
+  // Continuous smooth Coin Pot circular ring loop (tracks active video playback)
   useEffect(() => {
     const cycleMs = COIN_POT_CYCLE_SECONDS * 1000;
     let elapsedMs = 0;
@@ -379,7 +404,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       const delta = now - lastTick;
       lastTick = now;
 
-      if (document.visibilityState !== 'visible' || adPausedRef.current) {
+      if (document.visibilityState !== 'visible' || !isVideoPlayingRef.current) {
         return;
       }
 
@@ -612,7 +637,16 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
         {/* Center Full-Screen Video Stage (100% Width & Height between top bar & bottom ad banner) */}
         <div className="relative flex-1 min-h-0 w-full bg-black overflow-hidden">
-          <WatchVideoStage episode={episode} zoomed={isZoomed} adPaused={adPaused} />
+          <WatchVideoStage
+            episode={episode}
+            zoomed={isZoomed}
+            onPlayingChange={(playing) => {
+              isVideoPlayingRef.current = playing;
+            }}
+            onVideoEnded={() => {
+              void onMarkEpisodeWatched?.(episodeRef.current);
+            }}
+          />
 
           {/* Floating 3D Golden Treasure Coin Pot Widget (top-right at ~18%, scaled down out of center view) */}
           <div className="pointer-events-none absolute right-2 sm:right-4 top-[18%] z-20 flex flex-col items-center gap-1 origin-top-right scale-[0.82] sm:scale-90">
@@ -679,27 +713,6 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             </span>
           </div>
         </div>
-
-        {/* Clean "Watch on YouTube" Fallback Button below the player if owner disables external embedding */}
-        {youtubeWatchFallbackUrl && (
-          <div className="flex-none bg-[#09090D] border-t border-white/[0.08] px-3 sm:px-5 py-1.5 flex items-center justify-between gap-2">
-            <span className="text-[11px] text-[#8D867A] truncate">
-              Video blocked from embedding?
-            </span>
-            <a
-              href={youtubeWatchFallbackUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="min-h-[30px] px-3 rounded-lg border border-[#D4AF37]/45 bg-[#15120A] text-[#FCE7A2] hover:bg-[#1F1A0D] text-[11px] font-semibold inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap transition-colors"
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-[#D4AF37]" />
-              <span>Watch on YouTube</span>
-            </a>
-          </div>
-        )}
-
-        {/* Active Bottom Embedded Ad Container (automatically hidden/collapsed when no ad is active) */}
-        <BottomAdBanner embeddedAdHtml={embeddedAdHtml} inline />
       </div>
     </div>
   );

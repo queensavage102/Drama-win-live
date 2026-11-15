@@ -10,12 +10,15 @@ import {
   SAST_OFFSET_MS,
   SEEDED_TOURNAMENT_PLAYERS,
   getCurrentWeekKey,
+  getEpisodeSeriesId,
   getMondayStartTimestampSAST,
   getTodayDateKey,
   getYouTubeThumbnailUrl,
+  inferEpisodeCategory,
   isLegacyBrokenEpisode,
   sanitizeExternalUrl,
   sanitizeMediaUrl,
+  toSeriesId,
 } from '../constants';
 import {
   AppConfig,
@@ -319,7 +322,9 @@ export function renameLocalSection(
   safeWriteJson(LOCAL_SECTIONS_KEY, mappedSections);
 
   const updatedEpisodes = currentEpisodes.map((ep) =>
-    ep.series === cleanOld ? { ...ep, series: cleanNew } : ep
+    ep.series === cleanOld
+      ? { ...ep, series: cleanNew, seriesId: toSeriesId(cleanNew) }
+      : ep
   );
   saveLocalEpisodes(updatedEpisodes);
 
@@ -353,6 +358,8 @@ export function loadLocalEpisodes(): DramaEpisode[] {
             .filter((ep) => !isLegacyBrokenEpisode(ep))
             .map((ep) => ({
               ...ep,
+              seriesId: getEpisodeSeriesId(ep),
+              category: inferEpisodeCategory(ep.series, ep.title, ep.category),
               coverImage: ep.coverImage === 'none' ? '' : ep.coverImage,
               thumbnailUrl: ep.thumbnailUrl === 'none' ? '' : ep.thumbnailUrl,
             }))
@@ -424,6 +431,8 @@ export function addLocalEpisode(input: {
   id?: string;
   title: string;
   series: string;
+  seriesId?: string;
+  category?: string;
   episodeLabel: string;
   duration: string;
   rewardCoins: number;
@@ -444,17 +453,23 @@ export function addLocalEpisode(input: {
   const explicitCover = sanitizeMediaUrl(input.thumbnailUrl || input.coverImage || '');
   const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
   const finalCover = explicitCover || autoThumb || '';
+  const cleanSeries = input.series.trim().slice(0, 60);
+  const cleanTitle = input.title.trim().slice(0, 100);
+  const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: input.seriesId });
+  const category = inferEpisodeCategory(cleanSeries, cleanTitle, input.category);
 
   const created: DramaEpisode = {
     id,
-    title: input.title.trim().slice(0, 100),
-    series: input.series.trim().slice(0, 60),
+    title: cleanTitle,
+    series: cleanSeries,
+    seriesId,
+    category,
     episodeLabel: input.episodeLabel.trim().slice(0, 24) || 'EP 01',
     duration: input.duration.trim().slice(0, 20) || 'Watch 30s+',
     rewardCoins: Math.max(1, Math.min(5000, Math.round(input.rewardCoins || 100))),
     coverImage: finalCover,
     thumbnailUrl: finalCover,
-    synopsis: input.synopsis.trim().slice(0, 240) || `${input.series.trim()} episode.`,
+    synopsis: input.synopsis.trim().slice(0, 240) || `${cleanSeries} episode.`,
     sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
     youtubeUrl: cleanVideo,
     videoUrl: cleanVideo,
@@ -471,6 +486,8 @@ export function updateLocalEpisode(
   input: {
     title: string;
     series: string;
+    seriesId?: string;
+    category?: string;
     episodeLabel: string;
     duration: string;
     rewardCoins: number;
@@ -490,13 +507,19 @@ export function updateLocalEpisode(
   const explicitCover = sanitizeMediaUrl(input.thumbnailUrl || input.coverImage || '');
   const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
   const finalCover = explicitCover || autoThumb || '';
+  const cleanSeries = input.series.trim().slice(0, 60);
+  const cleanTitle = input.title.trim().slice(0, 100);
+  const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: input.seriesId });
+  const category = inferEpisodeCategory(cleanSeries, cleanTitle, input.category);
 
   const next = current.map((ep) => {
     if (ep.id !== episodeId) return ep;
     return {
       ...ep,
-      title: input.title.trim().slice(0, 100),
-      series: input.series.trim().slice(0, 60),
+      title: cleanTitle,
+      series: cleanSeries,
+      seriesId,
+      category,
       episodeLabel: input.episodeLabel.trim().slice(0, 24) || ep.episodeLabel,
       duration: input.duration.trim().slice(0, 20) || ep.duration,
       rewardCoins: Math.max(1, Math.min(5000, Math.round(input.rewardCoins || ep.rewardCoins))),

@@ -27,12 +27,17 @@ import {
   BRAND_NAME,
   DEFAULT_LIVE_TICKER_NAMES,
   DEFAULT_POOL_PRIZE_ZAR,
+  DEFAULT_REAL_AD_SCRIPT,
+  DRAMA_CATEGORIES,
   extractYouTubeId,
   extractYouTubePlaylistId,
+  getEpisodeSeriesId,
   getYouTubePreviewEmbedUrl,
   getYouTubeThumbnailUrl,
+  inferEpisodeCategory,
   isYouTubeDomainOnly,
   sanitizeMediaUrl,
+  toSeriesId,
 } from '../constants';
 import {
   AppConfig,
@@ -46,6 +51,8 @@ import { saveMediaFile, useResolvedMediaUrl } from '../utils/mediaStore';
 export interface AdminEpisodeFormInput {
   title: string;
   series: string;
+  seriesId?: string;
+  category?: string;
   episodeLabel: string;
   duration: string;
   rewardCoins: number;
@@ -182,6 +189,24 @@ const AdminVideoPreview: React.FC<{ videoUrl: string; title: string }> = ({
 
 const NEW_SERIES_OPTION = '__NEW_SERIES__';
 
+function computeNextEpisodeNumber(seriesEpisodes: DramaEpisode[]): number {
+  let maxNum = 0;
+  for (const ep of seriesEpisodes) {
+    const labelMatch = (ep.episodeLabel || '').match(/(\d+)/);
+    if (labelMatch) {
+      const parsed = Number(labelMatch[1]);
+      if (Number.isFinite(parsed) && parsed > maxNum) {
+        maxNum = parsed;
+      }
+    }
+  }
+  return Math.max(seriesEpisodes.length + 1, maxNum + 1, 1);
+}
+
+function formatEpisodeLabel(num: number): string {
+  return `EP ${String(Math.max(1, Math.round(num))).padStart(2, '0')}`;
+}
+
 export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   unlocked,
   firebaseUserEmail = null,
@@ -250,16 +275,52 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   );
   const [savingTicker, setSavingTicker] = useState(false);
 
-  const existingSeriesList = useMemo(() => {
-    const set = new Set<string>(sections);
-    optimisticSections.forEach((s) => {
-      if (s.trim()) set.add(s.trim());
-    });
+  const existingSeriesCatalog = useMemo(() => {
+    const orderedNames: string[] = [];
+    const seenIds = new Map<string, string>();
+
+    const registerName = (rawName: string) => {
+      const trimmed = rawName.trim();
+      if (!trimmed) return;
+      const sId = toSeriesId(trimmed);
+      if (!seenIds.has(sId)) {
+        seenIds.set(sId, trimmed);
+        orderedNames.push(trimmed);
+      }
+    };
+
+    sections.forEach(registerName);
+    optimisticSections.forEach(registerName);
     episodes.forEach((ep) => {
-      if (ep.series?.trim()) set.add(ep.series.trim());
+      if (ep.series?.trim()) registerName(ep.series);
     });
-    return Array.from(set);
+
+    return orderedNames.map((seriesName) => {
+      const sId = toSeriesId(seriesName);
+      const seriesEps = episodes
+        .filter((ep) => getEpisodeSeriesId(ep) === sId)
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+      const lead = seriesEps[0] || null;
+      const category = lead
+        ? inferEpisodeCategory(seriesName, lead.title, lead.category)
+        : inferEpisodeCategory(seriesName);
+      const nextNum = computeNextEpisodeNumber(seriesEps);
+      return {
+        seriesId: sId,
+        seriesName,
+        episodes: seriesEps,
+        episodeCount: seriesEps.length,
+        category,
+        nextEpNumber: nextNum,
+        nextEpLabel: formatEpisodeLabel(nextNum),
+      };
+    });
   }, [sections, optimisticSections, episodes]);
+
+  const existingSeriesList = useMemo(
+    () => existingSeriesCatalog.map((item) => item.seriesName),
+    [existingSeriesCatalog]
+  );
 
   const [editingEpisodeId, setEditingEpisodeId] = useState<string | null>(null);
   const [epVideoUrl, setEpVideoUrl] = useState('');
@@ -269,7 +330,13 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     existingSeriesList[0] || NEW_SERIES_OPTION
   );
   const [customSeriesName, setCustomSeriesName] = useState('');
-  const [epLabel, setEpLabel] = useState('EP 01');
+  const [epCategory, setEpCategory] = useState<string>(() =>
+    existingSeriesCatalog[0]?.category || 'Drama'
+  );
+  const [epCategoryManual, setEpCategoryManual] = useState(false);
+  const [epLabel, setEpLabel] = useState(() =>
+    existingSeriesCatalog[0]?.nextEpLabel || 'EP 01'
+  );
   const [epDuration, setEpDuration] = useState('Watch 30s+');
   const [epReward, setEpReward] = useState('150');
   const [epSynopsis, setEpSynopsis] = useState('');
@@ -301,6 +368,8 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
   // Series Watch Sheet Quick-Add & Inline Row Drafts
   const [wsTitle, setWsTitle] = useState('');
+  const [wsCategory, setWsCategory] = useState<string>('Drama');
+  const [wsCategoryManual, setWsCategoryManual] = useState(false);
   const [wsThumbUrl, setWsThumbUrl] = useState('');
   const [wsVideoUrl, setWsVideoUrl] = useState('');
   const [wsDescription, setWsDescription] = useState('');
@@ -311,6 +380,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       string,
       {
         title: string;
+        category: string;
         thumbUrl: string;
         videoUrl: string;
         description: string;
@@ -381,6 +451,38 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   const resolvedSeriesName =
     seriesSelect === NEW_SERIES_OPTION ? customSeriesName.trim() : seriesSelect;
 
+  const selectedCatalogSeries = useMemo(() => {
+    if (seriesSelect === NEW_SERIES_OPTION) return null;
+    const targetId = toSeriesId(seriesSelect);
+    return (
+      existingSeriesCatalog.find(
+        (item) => item.seriesId === targetId || item.seriesName === seriesSelect
+      ) || null
+    );
+  }, [seriesSelect, existingSeriesCatalog]);
+
+  const handleSelectSeriesInForm = (nextSeriesValue: string) => {
+    setSeriesSelect(nextSeriesValue);
+    if (nextSeriesValue === NEW_SERIES_OPTION) {
+      setEpLabel('EP 01');
+      if (!epCategoryManual) {
+        setEpCategory(inferEpisodeCategory(customSeriesName, epTitle));
+      }
+      return;
+    }
+    const found = existingSeriesCatalog.find(
+      (item) => item.seriesName === nextSeriesValue || item.seriesId === toSeriesId(nextSeriesValue)
+    );
+    if (found) {
+      setCustomSeriesName('');
+      setEpCategory(found.category);
+      setEpCategoryManual(false);
+      if (!editingEpisodeId) {
+        setEpLabel(found.nextEpLabel);
+      }
+    }
+  };
+
   const resetEpisodeForm = (keepSelectedSeries?: string, nextEpCount?: number) => {
     setEditingEpisodeId(null);
     setEpVideoUrl('');
@@ -389,8 +491,19 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     const targetSeries = keepSelectedSeries || existingSeriesList[0] || NEW_SERIES_OPTION;
     setSeriesSelect(targetSeries);
     setCustomSeriesName('');
-    const nextNum = typeof nextEpCount === 'number' ? nextEpCount : 1;
-    setEpLabel(`EP ${String(Math.max(1, nextNum)).padStart(2, '0')}`);
+    setEpCategoryManual(false);
+
+    const matched = existingSeriesCatalog.find(
+      (item) => item.seriesName === targetSeries || item.seriesId === toSeriesId(targetSeries)
+    );
+    setEpCategory(matched?.category || 'Drama');
+    const nextNum =
+      typeof nextEpCount === 'number'
+        ? nextEpCount
+        : matched
+          ? matched.nextEpNumber
+          : 1;
+    setEpLabel(formatEpisodeLabel(nextNum));
     setEpDuration('Watch 30s+');
     setEpReward('150');
     setEpSynopsis('');
@@ -409,12 +522,37 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       setSeriesSelect(NEW_SERIES_OPTION);
       setCustomSeriesName(ep.series);
     }
+    setEpCategory(inferEpisodeCategory(ep.series, ep.title, ep.category));
+    setEpCategoryManual(true);
     setEpLabel(ep.episodeLabel);
     setEpDuration(ep.duration);
     setEpReward(String(ep.rewardCoins));
     setEpSynopsis(ep.synopsis);
     setEpSponsorUrl(ep.sponsorUrl || '');
     setStatusMessage(null);
+    episodeFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handleQuickAddEpisodeToSeries = (seriesName: string) => {
+    const matched = existingSeriesCatalog.find(
+      (item) => item.seriesName === seriesName || item.seriesId === toSeriesId(seriesName)
+    );
+    setEditingEpisodeId(null);
+    setEpVideoUrl('');
+    setEpCoverUrl('');
+    setEpTitle('');
+    setSeriesSelect(seriesName);
+    setCustomSeriesName('');
+    setEpCategory(matched?.category || inferEpisodeCategory(seriesName));
+    setEpCategoryManual(false);
+    setEpLabel(matched ? matched.nextEpLabel : 'EP 01');
+    setEpDuration('Watch 30s+');
+    setEpReward('150');
+    setEpSynopsis('');
+    setEpSponsorUrl('');
+    setStatusMessage(
+      `Ready to add ${matched ? matched.nextEpLabel : 'next episode'} inside "${seriesName}".`
+    );
     episodeFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -480,6 +618,9 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     onCreateSection(trimmed);
     setSeriesSelect(trimmed);
     setCustomSeriesName('');
+    setEpCategory(inferEpisodeCategory(trimmed));
+    setEpCategoryManual(false);
+    setEpLabel('EP 01');
     setNewSectionInput('');
     setStatusMessage(`Section "${trimmed}" created and automatically selected below!`);
   };
@@ -655,18 +796,30 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
   const handleSubmitEpisode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!epTitle.trim() || !resolvedSeriesName) return;
+    if (!resolvedSeriesName) return;
     setSavingEp(true);
     setStatusMessage(null);
 
+    const finalEpLabel = epLabel.trim() || 'EP 01';
+    const finalTitle = epTitle.trim() || `${resolvedSeriesName} — ${finalEpLabel}`;
+    const targetSeriesId = toSeriesId(resolvedSeriesName);
+    const targetCategory =
+      epCategory.trim() || inferEpisodeCategory(resolvedSeriesName, finalTitle);
+
     const cleanVideo = sanitizeMediaUrl(epVideoUrl.trim());
     const explicitThumb = sanitizeMediaUrl(epCoverUrl.trim());
-    const finalThumb = explicitThumb || (cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) || '' : '') || autoYoutubeThumb || '';
+    const finalThumb =
+      explicitThumb ||
+      (cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) || '' : '') ||
+      autoYoutubeThumb ||
+      '';
 
     const payload: AdminEpisodeFormInput = {
-      title: epTitle.trim(),
+      title: finalTitle,
       series: resolvedSeriesName,
-      episodeLabel: epLabel.trim() || 'EP 01',
+      seriesId: targetSeriesId,
+      category: targetCategory,
+      episodeLabel: finalEpLabel,
       duration: epDuration.trim() || 'Watch 30s+',
       rewardCoins: Number(epReward) || 100,
       coverImage: finalThumb,
@@ -681,18 +834,28 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     try {
       if (editingEpisodeId) {
         await onUpdateEpisode(editingEpisodeId, payload);
-        showAdminToast(`Saved! Updated "${epTitle.trim()}" in "${resolvedSeriesName}".`);
+        showAdminToast(`Saved! Updated "${finalTitle}" in "${resolvedSeriesName}".`);
         resetEpisodeForm(resolvedSeriesName);
       } else {
-        const currentSeriesCount = episodes.filter(
-          (ep) => ep.series?.trim() === resolvedSeriesName
-        ).length;
+        const existingSeriesEps = episodes.filter(
+          (ep) => getEpisodeSeriesId(ep) === targetSeriesId
+        );
+        const currentMaxSort = existingSeriesEps.reduce(
+          (acc, ep) => Math.max(acc, ep.sortOrder || 0),
+          0
+        );
+        const nextNumAfterSave = Math.max(
+          computeNextEpisodeNumber(existingSeriesEps) + 1,
+          existingSeriesEps.length + 2
+        );
         await onAddEpisode({
           ...payload,
-          sortOrder: episodes.length + 1,
+          sortOrder: currentMaxSort > 0 ? currentMaxSort + 1 : episodes.length + 1,
         });
-        showAdminToast(`Saved! Published "${epTitle.trim()}" to "${resolvedSeriesName}".`);
-        resetEpisodeForm(resolvedSeriesName, currentSeriesCount + 2);
+        showAdminToast(
+          `Saved! Added "${finalEpLabel} — ${finalTitle}" to "${resolvedSeriesName}".`
+        );
+        resetEpisodeForm(resolvedSeriesName, nextNumAfterSave);
       }
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : 'Unable to save episode.');
@@ -719,10 +882,8 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
   // Watch Sheet helpers: one clean row per series folder
   const watchSheetRows = useMemo(() => {
-    return existingSeriesList.map((seriesName) => {
-      const seriesEps = episodes
-        .filter((ep) => ep.series === seriesName)
-        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    return existingSeriesCatalog.map((catalogItem) => {
+      const seriesEps = catalogItem.episodes;
       const lead = seriesEps[0] || null;
       const thumb = lead ? resolveEpisodeCover(lead) : '';
       const rawVid = lead ? (lead.videoUrl || lead.youtubeUrl || '').trim() : '';
@@ -730,15 +891,18 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         ? lead.synopsis || lead.episodeLabel || `${seriesEps.length} Episode(s)`
         : '0 Episodes';
       return {
-        seriesName,
+        seriesId: catalogItem.seriesId,
+        seriesName: catalogItem.seriesName,
+        category: catalogItem.category,
         episodeCount: seriesEps.length,
+        episodes: seriesEps,
         leadEpisode: lead,
         thumbUrl: thumb,
         videoUrl: rawVid,
         description: desc,
       };
     });
-  }, [existingSeriesList, episodes]);
+  }, [existingSeriesCatalog]);
 
   const handleWsQuickThumbUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -758,7 +922,13 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
   const handleWsRowThumbUpload = async (
     seriesKey: string,
-    baseDraft: { title: string; thumbUrl: string; videoUrl: string; description: string },
+    baseDraft: {
+      title: string;
+      category: string;
+      thumbUrl: string;
+      videoUrl: string;
+      description: string;
+    },
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const file = e.target.files?.[0];
@@ -788,13 +958,17 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
       const finalThumb = sanitizeMediaUrl(wsThumbUrl.trim()) || autoThumb || '';
       const cleanDesc = wsDescription.trim() || `${cleanTitle} drama series playlist.`;
+      const targetSeriesId = toSeriesId(cleanTitle);
+      const targetCategory = wsCategory.trim() || inferEpisodeCategory(cleanTitle);
 
       setOptimisticSections((prev) => (prev.includes(cleanTitle) ? prev : [...prev, cleanTitle]));
       onCreateSection(cleanTitle);
       await onAddEpisode({
-        title: cleanTitle,
+        title: `${cleanTitle} — EP 01`,
         series: cleanTitle,
-        episodeLabel: cleanDesc.slice(0, 24),
+        seriesId: targetSeriesId,
+        category: targetCategory,
+        episodeLabel: 'EP 01',
         duration: 'Watch & Earn',
         rewardCoins: 100,
         coverImage: finalThumb,
@@ -812,11 +986,15 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         return next;
       });
       setSeriesSelect(cleanTitle);
+      setEpCategory(targetCategory);
+      setEpLabel('EP 02');
       setWsTitle('');
+      setWsCategory('Drama');
+      setWsCategoryManual(false);
       setWsThumbUrl('');
       setWsVideoUrl('');
       setWsDescription('');
-      setStatusMessage(`Added "${cleanTitle}" to Series Watch Sheet & Watch / Series tab!`);
+      showAdminToast(`Added "${cleanTitle}" (${targetCategory}) to Series Watch Sheet!`);
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : 'Failed to add Watch Sheet row.');
     } finally {
@@ -826,13 +1004,22 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
   const handleWsSaveRow = async (
     row: {
+      seriesId: string;
       seriesName: string;
+      category: string;
+      episodes: DramaEpisode[];
       leadEpisode: DramaEpisode | null;
       thumbUrl: string;
       videoUrl: string;
       description: string;
     },
-    draft: { title: string; thumbUrl: string; videoUrl: string; description: string }
+    draft: {
+      title: string;
+      category: string;
+      thumbUrl: string;
+      videoUrl: string;
+      description: string;
+    }
   ) => {
     const cleanSeriesTitle = draft.title.trim().slice(0, 60);
     if (!cleanSeriesTitle) return;
@@ -845,6 +1032,9 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         targetSeries = cleanSeriesTitle;
       }
 
+      const targetSeriesId = toSeriesId(targetSeries);
+      const targetCategory =
+        draft.category.trim() || inferEpisodeCategory(targetSeries);
       const cleanVideo = sanitizeMediaUrl(draft.videoUrl.trim());
       const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
       const finalThumb = sanitizeMediaUrl(draft.thumbUrl.trim()) || autoThumb || '';
@@ -852,9 +1042,11 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
       if (row.leadEpisode) {
         await onUpdateEpisode(row.leadEpisode.id, {
-          title: cleanSeriesTitle,
+          title: row.leadEpisode.title || `${targetSeries} — EP 01`,
           series: targetSeries,
-          episodeLabel: cleanDesc.slice(0, 24),
+          seriesId: targetSeriesId,
+          category: targetCategory,
+          episodeLabel: row.leadEpisode.episodeLabel || 'EP 01',
           duration: row.leadEpisode.duration || 'Watch & Earn',
           rewardCoins: row.leadEpisode.rewardCoins || 100,
           coverImage: finalThumb,
@@ -864,11 +1056,34 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
           youtubeUrl: cleanVideo,
           videoUrl: cleanVideo,
         });
+
+        // Keep sibling episodes in the same series aligned with the updated series genre
+        for (const sibling of row.episodes) {
+          if (sibling.id !== row.leadEpisode.id && sibling.category !== targetCategory) {
+            await onUpdateEpisode(sibling.id, {
+              title: sibling.title,
+              series: targetSeries,
+              seriesId: targetSeriesId,
+              category: targetCategory,
+              episodeLabel: sibling.episodeLabel,
+              duration: sibling.duration,
+              rewardCoins: sibling.rewardCoins,
+              coverImage: sibling.coverImage,
+              thumbnailUrl: sibling.thumbnailUrl,
+              synopsis: sibling.synopsis,
+              sponsorUrl: sibling.sponsorUrl || '',
+              youtubeUrl: sibling.youtubeUrl,
+              videoUrl: sibling.videoUrl,
+            });
+          }
+        }
       } else {
         await onAddEpisode({
-          title: cleanSeriesTitle,
+          title: `${targetSeries} — EP 01`,
           series: targetSeries,
-          episodeLabel: cleanDesc.slice(0, 24),
+          seriesId: targetSeriesId,
+          category: targetCategory,
+          episodeLabel: 'EP 01',
           duration: 'Watch & Earn',
           rewardCoins: 100,
           coverImage: finalThumb,
@@ -886,7 +1101,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         delete next[row.seriesName];
         return next;
       });
-      setStatusMessage(`Saved Watch Sheet row "${targetSeries}".`);
+      showAdminToast(`Saved "${targetSeries}" (${targetCategory}).`);
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : 'Unable to save Watch Sheet row.');
     } finally {
@@ -1088,10 +1303,34 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                       required
                       maxLength={60}
                       value={wsTitle}
-                      onChange={(e) => setWsTitle(e.target.value)}
-                      placeholder="e.g. Royal Secret"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setWsTitle(val);
+                        if (!wsCategoryManual) {
+                          setWsCategory(inferEpisodeCategory(val));
+                        }
+                      }}
+                      placeholder="e.g. The Candy Man"
                       className="w-full min-h-[42px] px-3 rounded-lg bg-[#070709] border border-white/[0.12] text-xs sm:text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                     />
+                  </div>
+
+                  <div className="md:col-span-2 space-y-1">
+                    <label className="text-[11px] text-[#A69F91]">Genre / Category</label>
+                    <select
+                      value={wsCategory}
+                      onChange={(e) => {
+                        setWsCategory(e.target.value);
+                        setWsCategoryManual(true);
+                      }}
+                      className="w-full min-h-[42px] px-2.5 rounded-lg bg-[#070709] border border-white/[0.12] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                    >
+                      {DRAMA_CATEGORIES.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="md:col-span-3 space-y-1">
@@ -1117,24 +1356,24 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     </div>
                   </div>
 
-                  <div className="md:col-span-3 space-y-1">
-                    <label className="text-[11px] text-[#A69F91]">YouTube Playlist / Video URL</label>
+                  <div className="md:col-span-2 space-y-1">
+                    <label className="text-[11px] text-[#A69F91]">EP 01 Video URL</label>
                     <input
                       type="text"
                       value={wsVideoUrl}
                       onChange={(e) => setWsVideoUrl(e.target.value)}
-                      placeholder="https://youtube.com/playlist?list=..."
+                      placeholder="https://youtu.be/..."
                       className="w-full min-h-[42px] px-3 rounded-lg bg-[#070709] border border-white/[0.12] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                     />
                   </div>
 
-                  <div className="md:col-span-3 space-y-1">
-                    <label className="text-[11px] text-[#A69F91]">Episode Count / Description</label>
+                  <div className="md:col-span-2 space-y-1">
+                    <label className="text-[11px] text-[#A69F91]">Description</label>
                     <input
                       type="text"
                       value={wsDescription}
                       onChange={(e) => setWsDescription(e.target.value)}
-                      placeholder="e.g. 12 Episodes · Full Sub"
+                      placeholder="Short hook..."
                       className="w-full min-h-[42px] px-3 rounded-lg bg-[#070709] border border-white/[0.12] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                     />
                   </div>
@@ -1154,21 +1393,23 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
               {/* Spreadsheet Table Rows */}
               <div className="overflow-x-auto rounded-xl border border-white/[0.08] bg-[#070709]">
-                <table className="w-full text-left border-collapse min-w-[820px]">
+                <table className="w-full text-left border-collapse min-w-[940px]">
                   <thead>
                     <tr className="border-b border-white/[0.08] bg-[#0D0D13] text-[11px] font-semibold uppercase tracking-wider text-[#A69F91]">
                       <th className="py-2.5 px-3 w-20">Order</th>
                       <th className="py-2.5 px-3">Series Title</th>
+                      <th className="py-2.5 px-3 w-32">Genre</th>
                       <th className="py-2.5 px-3">Cover Thumbnail</th>
-                      <th className="py-2.5 px-3">YouTube Playlist / Video URL</th>
-                      <th className="py-2.5 px-3">Episode Count / Description</th>
-                      <th className="py-2.5 px-3 text-right w-40">Actions</th>
+                      <th className="py-2.5 px-3">Lead Video URL</th>
+                      <th className="py-2.5 px-3">Description</th>
+                      <th className="py-2.5 px-3 text-right w-52">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/[0.06] text-xs">
                     {watchSheetRows.map((row, index) => {
                       const draft = wsDrafts[row.seriesName] || {
                         title: row.seriesName,
+                        category: row.category,
                         thumbUrl: row.thumbUrl,
                         videoUrl: row.videoUrl,
                         description: row.description,
@@ -1182,7 +1423,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                       const isRowSaving = wsSavingSeries === row.seriesName;
 
                       return (
-                        <tr key={row.seriesName} className="hover:bg-white/[0.02] align-middle">
+                        <tr key={row.seriesId} className="hover:bg-white/[0.02] align-middle">
                           <td className="py-2.5 px-3">
                             <div className="flex items-center gap-1">
                               <span className="font-mono-num text-[#E8C96D] w-4">
@@ -1218,8 +1459,25 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                               className="w-full min-h-[36px] px-2.5 rounded-lg bg-[#0D0D13] border border-white/[0.1] text-xs font-semibold text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                             />
                             <p className="text-[10px] text-[#8D867A] mt-1 font-mono-num">
-                              {row.episodeCount} {row.episodeCount === 1 ? 'item' : 'items'} in folder
+                              {row.episodeCount} {row.episodeCount === 1 ? 'ep' : 'eps'} · {row.seriesId}
                             </p>
+                          </td>
+
+                          <td className="py-2.5 px-3">
+                            <select
+                              value={draft.category}
+                              onChange={(e) => updateDraft({ category: e.target.value })}
+                              className="w-full min-h-[36px] px-2 rounded-lg bg-[#0D0D13] border border-white/[0.1] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                            >
+                              {DRAMA_CATEGORIES.map((cat) => (
+                                <option key={cat} value={cat}>
+                                  {cat}
+                                </option>
+                              ))}
+                              {!DRAMA_CATEGORIES.includes(draft.category as (typeof DRAMA_CATEGORIES)[number]) && (
+                                <option value={draft.category}>{draft.category}</option>
+                              )}
+                            </select>
                           </td>
 
                           <td className="py-2.5 px-3">
@@ -1232,7 +1490,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                                 value={draft.thumbUrl}
                                 onChange={(e) => updateDraft({ thumbUrl: e.target.value })}
                                 placeholder="Cover URL"
-                                className="w-28 min-h-[36px] px-2 rounded-lg bg-[#0D0D13] border border-white/[0.1] text-[11px] text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                                className="w-24 min-h-[36px] px-2 rounded-lg bg-[#0D0D13] border border-white/[0.1] text-[11px] text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                               />
                               <label className="min-h-[36px] px-2 rounded-lg border border-[#D4AF37]/35 text-[#FCE7A2] hover:bg-[#D4AF37]/10 inline-flex items-center cursor-pointer shrink-0">
                                 <Upload className="w-3 h-3" />
@@ -1251,7 +1509,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                               type="text"
                               value={draft.videoUrl}
                               onChange={(e) => updateDraft({ videoUrl: e.target.value })}
-                              placeholder="https://youtube.com/playlist?list=..."
+                              placeholder="https://youtu.be/..."
                               className="w-full min-h-[36px] px-2.5 rounded-lg bg-[#0D0D13] border border-white/[0.1] text-[11px] text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                             />
                           </td>
@@ -1268,6 +1526,14 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
                           <td className="py-2.5 px-3 text-right">
                             <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleQuickAddEpisodeToSeries(row.seriesName)}
+                                className="min-h-[34px] px-2.5 rounded-lg border border-[#D4AF37]/45 bg-[#17130A] text-[#FCE7A2] hover:bg-[#231D0F] font-semibold text-[11px] inline-flex items-center gap-1 whitespace-nowrap cursor-pointer"
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span>Add Ep</span>
+                              </button>
                               <button
                                 type="button"
                                 disabled={isRowSaving}
@@ -1367,7 +1633,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                         <>
                           <button
                             type="button"
-                            onClick={() => setSeriesSelect(sec)}
+                            onClick={() => handleSelectSeriesInForm(sec)}
                             className="flex items-center gap-2 min-w-0 text-left hover:text-[#FCE7A2]"
                           >
                             <span className="font-semibold text-[#F6F2E9] truncate">{sec}</span>
@@ -1478,6 +1744,109 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
               </div>
 
               <form onSubmit={handleSubmitEpisode} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Step 1: Choose Target Series & Category First */}
+                <div className="sm:col-span-2 rounded-xl bg-[#0D0B07] border border-[#D4AF37]/35 p-4 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="ep-series-select"
+                        className="text-xs font-semibold text-[#FCE7A2]"
+                      >
+                        1. Select Existing Series (or Create New)
+                      </label>
+                      <select
+                        id="ep-series-select"
+                        value={seriesSelect}
+                        onChange={(e) => handleSelectSeriesInForm(e.target.value)}
+                        className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/40 text-sm font-medium text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                      >
+                        {existingSeriesCatalog.map((item) => (
+                          <option key={item.seriesId} value={item.seriesName}>
+                            {item.seriesName} ({item.episodeCount}{' '}
+                            {item.episodeCount === 1 ? 'ep' : 'eps'} · {item.category})
+                          </option>
+                        ))}
+                        <option value={NEW_SERIES_OPTION}>+ Create a new series...</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="ep-category-select"
+                        className="text-xs font-semibold text-[#FCE7A2]"
+                      >
+                        2. Genre / Category Row
+                      </label>
+                      <select
+                        id="ep-category-select"
+                        value={epCategory}
+                        onChange={(e) => {
+                          setEpCategory(e.target.value);
+                          setEpCategoryManual(true);
+                        }}
+                        className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/30 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                      >
+                        {DRAMA_CATEGORIES.map((cat) => (
+                          <option key={cat} value={cat}>
+                            {cat}
+                          </option>
+                        ))}
+                        {!DRAMA_CATEGORIES.includes(epCategory as (typeof DRAMA_CATEGORIES)[number]) && (
+                          <option value={epCategory}>{epCategory}</option>
+                        )}
+                      </select>
+                    </div>
+                  </div>
+
+                  {seriesSelect === NEW_SERIES_OPTION ? (
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-[#E8C96D]">New Series Name *</label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={60}
+                        value={customSeriesName}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCustomSeriesName(val);
+                          if (!epCategoryManual) {
+                            setEpCategory(inferEpisodeCategory(val, epTitle));
+                          }
+                        }}
+                        placeholder="e.g. The Candy Man"
+                        className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/40 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                      />
+                    </div>
+                  ) : selectedCatalogSeries ? (
+                    <div className="rounded-lg bg-[#070709]/85 border border-white/[0.08] px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="text-[#F6F2E9] font-medium truncate">
+                          Adding directly inside{' '}
+                          <span className="text-[#FCE7A2] font-semibold">
+                            {selectedCatalogSeries.seriesName}
+                          </span>{' '}
+                          <span className="text-[10px] font-mono-num text-[#8D867A]">
+                            ({selectedCatalogSeries.seriesId})
+                          </span>
+                        </p>
+                        <p className="text-[11px] text-[#A69F91] truncate">
+                          {selectedCatalogSeries.episodeCount > 0
+                            ? `Current episodes: ${selectedCatalogSeries.episodes
+                                .map((e) => e.episodeLabel)
+                                .slice(0, 6)
+                                .join(', ')}${selectedCatalogSeries.episodeCount > 6 ? '…' : ''}`
+                            : 'No episodes yet — this will be Episode 1.'}
+                        </p>
+                      </div>
+                      {!editingEpisodeId && (
+                        <span className="px-2.5 py-1 rounded-md bg-[#D4AF37]/15 border border-[#D4AF37]/40 font-mono-num text-[11px] font-bold text-[#FCE7A2] shrink-0">
+                          Next: {selectedCatalogSeries.nextEpLabel}
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
                 {/* Video URL OR Local Video Upload */}
                 <div className="sm:col-span-2 rounded-xl bg-[#09090D] border border-white/[0.08] p-4 space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1486,7 +1855,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                       className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#E8C96D]"
                     >
                       <Video className="w-3.5 h-3.5" />
-                      <span>Episode Video (YouTube Playlist, YouTube Video, MP4 URL, or Upload)</span>
+                      <span>Episode Video (YouTube Video/Playlist, MP4 URL, or Upload)</span>
                     </label>
                     {extractedPlaylistId ? (
                       <span className="font-mono-num text-[11px] font-semibold text-[#FCE7A2]">
@@ -1509,7 +1878,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                       type="text"
                       value={epVideoUrl}
                       onChange={(e) => setEpVideoUrl(e.target.value)}
-                      placeholder="https://youtube.com/playlist?list=... or https://youtu.be/... or .mp4"
+                      placeholder="https://youtube.com/watch?v=... or https://youtu.be/... or .mp4"
                       className="flex-1 min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/25 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                     />
                     <label className="min-h-[44px] px-4 rounded-xl border border-[#D4AF37]/45 bg-[#15120A] text-[#FCE7A2] hover:bg-[#1F1A0D] text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0">
@@ -1560,71 +1929,25 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   </div>
                 </div>
 
-                {/* Section / Series Selector */}
                 <div className="space-y-1">
-                  <label className="text-[11px] text-[#A69F91]">Section / Series</label>
-                  <select
-                    value={seriesSelect}
-                    onChange={(e) => setSeriesSelect(e.target.value)}
-                    className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-white/[0.1] text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                  >
-                    {existingSeriesList.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                    <option value={NEW_SERIES_OPTION}>+ Create a new section...</option>
-                  </select>
-                </div>
-
-                {seriesSelect === NEW_SERIES_OPTION ? (
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-[#E8C96D]">New Section Name</label>
-                    <input
-                      type="text"
-                      required
-                      value={customSeriesName}
-                      onChange={(e) => setCustomSeriesName(e.target.value)}
-                      placeholder="e.g. Royal Betrayal [ENG SUB]"
-                      className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/35 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                    />
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-[#A69F91]">Episode Number</label>
-                    <input
-                      type="text"
-                      required
-                      value={epLabel}
-                      onChange={(e) => setEpLabel(e.target.value)}
-                      placeholder="EP 01"
-                      className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-white/[0.1] text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                    />
-                  </div>
-                )}
-
-                {seriesSelect === NEW_SERIES_OPTION && (
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-[#A69F91]">Episode Number</label>
-                    <input
-                      type="text"
-                      required
-                      value={epLabel}
-                      onChange={(e) => setEpLabel(e.target.value)}
-                      placeholder="EP 01"
-                      className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-white/[0.1] text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                    />
-                  </div>
-                )}
-
-                <div className="space-y-1">
-                  <label className="text-[11px] text-[#A69F91]">Episode Title</label>
+                  <label className="text-[11px] text-[#A69F91]">Episode Number</label>
                   <input
                     type="text"
                     required
+                    value={epLabel}
+                    onChange={(e) => setEpLabel(e.target.value)}
+                    placeholder="EP 02"
+                    className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-white/[0.1] text-sm font-mono-num text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] text-[#A69F91]">Episode Title (optional)</label>
+                  <input
+                    type="text"
                     value={epTitle}
                     onChange={(e) => setEpTitle(e.target.value)}
-                    placeholder="e.g. Episode 1 — Secret Witness"
+                    placeholder={`e.g. ${selectedCatalogSeries?.nextEpLabel || 'EP 01'} — Secret Witness`}
                     className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-white/[0.1] text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                   />
                 </div>
@@ -1749,7 +2072,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                               {ep.title}
                             </p>
                             <p className="text-xs text-[#8D867A] truncate">
-                              {ep.series} · {ep.episodeLabel} · +{ep.rewardCoins} Coins · {vidKind}
+                              {ep.series} · {inferEpisodeCategory(ep.series, ep.title, ep.category)} · {ep.episodeLabel} · +{ep.rewardCoins} Coins · {vidKind}
                             </p>
                           </div>
                         </div>
@@ -1846,7 +2169,14 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     placeholder='<script src="https://..."></script> or HTML ad banner markup'
                     className="w-full p-3 rounded-xl bg-[#070709] border border-[#D4AF37]/25 text-xs font-mono text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                   />
-                  <div className="flex justify-end gap-2">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEmbeddedAdInput(DEFAULT_REAL_AD_SCRIPT)}
+                      className="min-h-[38px] px-3 rounded-xl border border-[#D4AF37]/35 text-xs font-medium text-[#FCE7A2] hover:bg-[#D4AF37]/10"
+                    >
+                      Use Default 320x50 Script
+                    </button>
                     {embeddedAdInput && (
                       <button
                         type="button"

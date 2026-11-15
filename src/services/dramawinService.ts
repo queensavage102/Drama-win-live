@@ -26,9 +26,12 @@ import {
   MYSTERY_ENTRY_COST,
   forceSaveDefaultEpisodesToLocalStorage,
   getCurrentWeekKey,
+  getEpisodeSeriesId,
   getMondayStartTimestampSAST,
   getTodayDateKey,
   getYouTubeThumbnailUrl,
+  inferEpisodeCategory,
+  isLegacyBrokenEpisode,
   sanitizeExternalUrl,
 } from '../constants';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -245,6 +248,8 @@ export function subscribeEpisodes(
           return {
             id: d.id,
             ...data,
+            seriesId: getEpisodeSeriesId(data),
+            category: inferEpisodeCategory(data.series, data.title, data.category),
             coverImage: data.coverImage === 'none' ? '' : data.coverImage,
           };
         })
@@ -582,21 +587,62 @@ export async function claimVideoAdBreak(
   );
 }
 
+export function mergeWatchedEpisodeId(
+  existingIds: string[] = [],
+  episodeId: string
+): string[] {
+  const cleanId = episodeId.trim();
+  if (!cleanId) return existingIds.slice(-100);
+  const alreadyPresent = existingIds.some(
+    (entry) => entry === cleanId || entry.startsWith(`${cleanId}::`)
+  );
+  if (alreadyPresent) return existingIds.slice(-100);
+  return [...existingIds, cleanId].slice(-100);
+}
+
+export async function markEpisodeAsWatched(
+  uid: string,
+  privateState: PlayerPrivate,
+  episodeId: string
+): Promise<string[]> {
+  const nextWatched = mergeWatchedEpisodeId(privateState.watchedEpisodeIds || [], episodeId);
+  if (nextWatched.length === (privateState.watchedEpisodeIds || []).length) {
+    return nextWatched;
+  }
+  const todayKey = getTodayDateKey();
+  const path = `playerPrivate/${uid}`;
+  try {
+    await updateDoc(doc(db, 'playerPrivate', uid), {
+      watchedEpisodeIds: nextWatched,
+      lastActivityDate: todayKey,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+  return nextWatched;
+}
+
 export async function awardWatchPotCoins(
   player: LeaderboardPlayer,
   privateState: PlayerPrivate,
   rewardCoins: number,
   qualificationThreshold: number,
-  episodeTitle: string
+  episodeTitle: string,
+  episodeId?: string
 ): Promise<void> {
   const todayKey = getTodayDateKey();
   const safeReward = Math.max(100, Math.min(300, Math.round(rewardCoins || 100)));
+  const nextWatched = episodeId
+    ? mergeWatchedEpisodeId(privateState.watchedEpisodeIds || [], episodeId)
+    : undefined;
   await awardPlayerCoins(
     player,
     privateState,
     safeReward,
     qualificationThreshold,
     {
+      ...(nextWatched ? { watchedEpisodeIds: nextWatched } : {}),
       lastActivityDate: todayKey,
     },
     undefined,
@@ -810,9 +856,16 @@ export async function unlockAdminAccess(uid: string, passcode: string): Promise<
 }
 
 function buildFirestoreEpisodeFields(ep: Omit<DramaEpisode, 'id' | 'createdAt' | 'updatedAt'>) {
+  const cleanSeries = (ep.series.trim() || 'Featured Series').slice(0, 60);
+  const cleanTitle = (ep.title.trim() || 'Untitled Episode').slice(0, 100);
+  const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: ep.seriesId }).slice(0, 80);
+  const category = inferEpisodeCategory(cleanSeries, cleanTitle, ep.category).slice(0, 32);
+
   return {
-    title: (ep.title.trim() || 'Untitled Episode').slice(0, 100),
-    series: (ep.series.trim() || 'Featured Series').slice(0, 60),
+    title: cleanTitle,
+    series: cleanSeries,
+    seriesId,
+    category,
     episodeLabel: (ep.episodeLabel.trim() || 'Series').slice(0, 24),
     duration: (ep.duration.trim() || 'Watch & Earn').slice(0, 16),
     rewardCoins: Math.max(1, Math.min(5000, Math.round(ep.rewardCoins || 100))),
@@ -823,6 +876,25 @@ function buildFirestoreEpisodeFields(ep: Omit<DramaEpisode, 'id' | 'createdAt' |
     sortOrder: Math.max(0, Math.min(10000, Math.round(ep.sortOrder || 1))),
     isPublic: true,
   };
+}
+
+export async function purgeLegacyAndStrayEpisodesFromFirestore(): Promise<number> {
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'episodes'), where('isPublic', '==', true))
+    );
+    const toDelete = snap.docs.filter((d) => {
+      const ep = { id: d.id, ...(d.data() as Omit<DramaEpisode, 'id'>) };
+      return isLegacyBrokenEpisode(ep);
+    });
+    if (toDelete.length === 0) return 0;
+    const batch = writeBatch(db);
+    toDelete.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    return toDelete.length;
+  } catch {
+    return 0;
+  }
 }
 
 export async function ensureAdminSeededData(): Promise<void> {
@@ -1188,6 +1260,8 @@ export async function addDramaEpisode(input: {
   id?: string;
   title: string;
   series: string;
+  seriesId?: string;
+  category?: string;
   episodeLabel: string;
   duration: string;
   rewardCoins: number;
@@ -1220,16 +1294,22 @@ export async function addDramaEpisode(input: {
       : '';
   const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
   const finalCover = (explicitCover || autoThumb || 'none').slice(0, 500);
+  const cleanTitle = (input.title.trim() || 'Untitled Episode').slice(0, 100);
+  const cleanSeries = (input.series.trim() || 'Featured Series').slice(0, 60);
+  const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: input.seriesId }).slice(0, 80);
+  const category = inferEpisodeCategory(cleanSeries, cleanTitle, input.category).slice(0, 32);
 
   try {
     await setDoc(doc(db, 'episodes', id), {
-      title: (input.title.trim() || 'Untitled Episode').slice(0, 100),
-      series: (input.series.trim() || 'Featured Series').slice(0, 60),
+      title: cleanTitle,
+      series: cleanSeries,
+      seriesId,
+      category,
       episodeLabel: (input.episodeLabel.trim() || 'Series').slice(0, 24),
       duration: (input.duration.trim() || 'Watch & Earn').slice(0, 16),
       rewardCoins: Math.max(1, Math.min(5000, Math.round(input.rewardCoins || 100))),
       coverImage: finalCover,
-      synopsis: (input.synopsis.trim() || `${input.series.trim() || 'Drama'} series.`).slice(0, 240),
+      synopsis: (input.synopsis.trim() || `${cleanSeries} series.`).slice(0, 240),
       sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
       youtubeUrl: cleanVideo,
       sortOrder: Math.max(0, Math.min(10000, Math.round(input.sortOrder))),
@@ -1247,6 +1327,8 @@ export async function updateDramaEpisode(
   input: {
     title: string;
     series: string;
+    seriesId?: string;
+    category?: string;
     episodeLabel: string;
     duration: string;
     rewardCoins: number;
@@ -1279,15 +1361,21 @@ export async function updateDramaEpisode(
       : '';
   const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
   const finalCover = (explicitCover || autoThumb || 'none').slice(0, 500);
+  const cleanTitle = (input.title.trim() || 'Untitled Episode').slice(0, 100);
+  const cleanSeries = (input.series.trim() || 'Featured Series').slice(0, 60);
+  const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: input.seriesId }).slice(0, 80);
+  const category = inferEpisodeCategory(cleanSeries, cleanTitle, input.category).slice(0, 32);
 
   const fields = {
-    title: (input.title.trim() || 'Untitled Episode').slice(0, 100),
-    series: (input.series.trim() || 'Featured Series').slice(0, 60),
+    title: cleanTitle,
+    series: cleanSeries,
+    seriesId,
+    category,
     episodeLabel: (input.episodeLabel.trim() || 'Series').slice(0, 24),
     duration: (input.duration.trim() || 'Watch & Earn').slice(0, 16),
     rewardCoins: Math.max(1, Math.min(5000, Math.round(input.rewardCoins || 100))),
     coverImage: finalCover,
-    synopsis: (input.synopsis.trim() || `${input.series.trim() || 'Drama'} series.`).slice(0, 240),
+    synopsis: (input.synopsis.trim() || `${cleanSeries} series.`).slice(0, 240),
     sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
     youtubeUrl: cleanVideo,
   };

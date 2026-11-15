@@ -10,10 +10,9 @@ interface WatchTabProps {
   playerTotalCoins: number;
   qualificationThreshold: number;
   muted: boolean;
-  adPaused?: boolean;
-  embeddedAdHtml?: string;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
+  onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
 }
 
 export const WatchTab: React.FC<WatchTabProps> = ({
@@ -24,10 +23,9 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   playerTotalCoins,
   qualificationThreshold,
   muted,
-  adPaused = false,
-  embeddedAdHtml = '',
   onToggleMute,
   onAwardCoinPot,
+  onMarkEpisodeWatched,
 }) => {
   return (
     <SeriesFoldersSection
@@ -38,10 +36,9 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       playerTotalCoins={playerTotalCoins}
       qualificationThreshold={qualificationThreshold}
       muted={muted}
-      adPaused={adPaused}
-      embeddedAdHtml={embeddedAdHtml}
       onToggleMute={onToggleMute}
       onAwardCoinPot={onAwardCoinPot}
+      onMarkEpisodeWatched={onMarkEpisodeWatched}
     />
   );
 };

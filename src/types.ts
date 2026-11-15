@@ -45,6 +45,8 @@ export interface DramaEpisode {
   id: string;
   title: string;
   series: string;
+  seriesId?: string;
+  category?: string;
   episodeLabel: string;
   duration: string;
   rewardCoins: number;

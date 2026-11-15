@@ -89,20 +89,16 @@ export async function resolveMediaUrl(src?: string): Promise<string> {
 
 export function useResolvedMediaUrl(src?: string): string {
   const raw = (src || '').trim();
+  const isIdb = raw.startsWith(IDB_PREFIX);
   const [resolved, setResolved] = useState<string>(() => {
     if (!raw) return '';
-    if (!raw.startsWith(IDB_PREFIX)) return raw;
+    if (!isIdb) return raw;
     return resolvedCache.get(raw) || '';
   });
 
   useEffect(() => {
     let active = true;
-    if (!raw) {
-      setResolved('');
-      return;
-    }
-    if (!raw.startsWith(IDB_PREFIX)) {
-      setResolved(raw);
+    if (!raw || !isIdb) {
       return;
     }
     const cached = resolvedCache.get(raw);
@@ -110,13 +106,16 @@ export function useResolvedMediaUrl(src?: string): string {
       setResolved(cached);
       return;
     }
+    setResolved('');
     void resolveMediaUrl(raw).then((url) => {
       if (active) setResolved(url);
     });
     return () => {
       active = false;
     };
-  }, [raw]);
+  }, [raw, isIdb]);
 
-  return resolved;
+  if (!raw) return '';
+  if (!isIdb) return raw;
+  return resolvedCache.get(raw) || resolved;
 }

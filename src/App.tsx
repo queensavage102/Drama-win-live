@@ -6,7 +6,6 @@ import { BottomAdBanner } from './components/BottomAdBanner';
 import { CheckInVaultTab } from './components/CheckInVaultTab';
 import { ConfettiExplosion } from './components/ConfettiExplosion';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { IncomingAdOverlay } from './components/IncomingAdOverlay';
 import { LeaderboardTab } from './components/LeaderboardTab';
 import { MeTab } from './components/MeTab';
 import { MysteryRevealState } from './components/MysteryVaultCard';
@@ -20,18 +19,18 @@ import {
   DEFAULT_POOL_PRIZE_ZAR,
   DEFAULT_QUALIFICATION_THRESHOLD,
   DEFAULT_SPONSOR_URL,
-  INCOMING_AD_DURATION_SECONDS,
-  INCOMING_AD_INTERVAL_SECONDS,
-  SPONSOR_MIN_VIEW_SECONDS,
   STREAK_DAYS,
   forceSaveDefaultEpisodesToLocalStorage,
   getCurrentWeekKey,
+  getEpisodeSeriesId,
   getMondayStartTimestampSAST,
   getTodayDateKey,
   getTodayWeekdayKey,
+  inferEpisodeCategory,
   isLegacyBrokenEpisode,
   sanitizeExternalUrl,
   syncLocalStorageCatalogMigration,
+  toSeriesId,
 } from './constants';
 import { auth, googleProvider } from './firebase';
 import {
@@ -43,6 +42,9 @@ import {
   deleteDramaEpisode,
   evaluateSundayPoolRollover,
   fetchPlayerProfile,
+  markEpisodeAsWatched,
+  mergeWatchedEpisodeId,
+  purgeLegacyAndStrayEpisodesFromFirestore,
   reorderDramaEpisodes,
   resetPlayerCoinsToZero,
   restoreDefaultEpisodes,
@@ -103,16 +105,25 @@ import {
 } from './utils/sound';
 
 const ADMIN_SESSION_KEY = 'dramawin_admin_unlocked';
+const CLOUD_OPENED_BOXES_PREFIX = 'dramawin_cloud_opened_boxes_';
 
-interface PendingSponsorClaim {
-  type: 'streak' | 'mystery-box';
-  startedAt: number;
-  leftTab: boolean;
-  reward: number;
-  dayKey?: WeekDayKey;
-  boxNumber?: number;
-  paidWithCoins?: boolean;
-  label: string;
+function readCloudOpenedBoxes(uid: string, dateKey: string): number[] {
+  try {
+    const raw = window.localStorage.getItem(`${CLOUD_OPENED_BOXES_PREFIX}${uid}_${dateKey}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((n): n is number => typeof n === 'number') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCloudOpenedBoxes(uid: string, dateKey: string, boxes: number[]): void {
+  try {
+    window.localStorage.setItem(`${CLOUD_OPENED_BOXES_PREFIX}${uid}_${dateKey}`, JSON.stringify(boxes));
+  } catch {
+    // Ignore storage quota errors
+  }
 }
 
 function isAdminPath(): boolean {
@@ -162,7 +173,7 @@ function DramaWinApp() {
 
   const [activeTab, setActiveTab] = useState<AppTab>('watch');
   const [toast, setToast] = useState<ToastNotice | null>(null);
-  const [pendingMysteryBoxNumber, setPendingMysteryBoxNumber] = useState<number | null>(null);
+  const [cloudOpenedBoxes, setCloudOpenedBoxes] = useState<number[]>([]);
   const [mysteryReveal, setMysteryReveal] = useState<MysteryRevealState | null>(null);
   const [mysteryVoucherModal, setMysteryVoucherModal] = useState<{
     winner: MysteryWinnerRecord;
@@ -173,13 +184,8 @@ function DramaWinApp() {
   const [confettiActive, setConfettiActive] = useState(false);
   const [splashDone, setSplashDone] = useState<boolean>(() => isAdminPath());
 
-  // Global 60s Active Timer -> 10s "Warning: Incoming Ad" Overlay (smooth 0% -> 100% progress bar)
-  const [activeTimeSeconds, setActiveTimeSeconds] = useState(0);
-  const [incomingAdOpen, setIncomingAdOpen] = useState(false);
-  const [incomingAdProgressPct, setIncomingAdProgressPct] = useState(0);
-
-  const pendingSponsorRef = useRef<PendingSponsorClaim | null>(null);
   const streakReminderShownRef = useRef<string | null>(null);
+  const purgedStrayFirestoreRef = useRef<boolean>(false);
 
   // Use cloud session only if user is signed into Firebase Auth AND has a cloud profile;
   // otherwise run 100% seamlessly in instant localStorage mode with zero auth wall.
@@ -364,8 +370,10 @@ function DramaWinApp() {
         setCloudLeaderboard([]);
         setCloudWinners([]);
         setCloudTransactions([]);
+        setCloudOpenedBoxes([]);
         return;
       }
+      setCloudOpenedBoxes(readCloudOpenedBoxes(user.uid, getTodayDateKey()));
       try {
         const { privateProfile: loadedPrivate } = await fetchPlayerProfile(user.uid);
         setCloudPrivateProfile(loadedPrivate);
@@ -375,6 +383,16 @@ function DramaWinApp() {
     });
     return () => unsub();
   }, []);
+
+  // Automatically purge stray Gojo/anime or legacy broken episode docs from Firestore once an admin is signed in
+  useEffect(() => {
+    if (!firebaseUser || purgedStrayFirestoreRef.current) return;
+    const isOwnerOrAdmin =
+      firebaseUser.email === 'gerinaicker04@gmail.com' || adminUnlocked;
+    if (!isOwnerOrAdmin) return;
+    purgedStrayFirestoreRef.current = true;
+    void purgeLegacyAndStrayEpisodesFromFirestore();
+  }, [firebaseUser, adminUnlocked]);
 
   useEffect(() => {
     if (!firebaseUser) return;
@@ -400,59 +418,6 @@ function DramaWinApp() {
       unsubWinners();
     };
   }, [firebaseUser, cloudPrivateProfile?.uid, adminUnlocked]);
-
-  // Global 60-second active-time timer -> 10-second "Warning: Incoming Ad" overlay
-  useEffect(() => {
-    if (isAdminRoute || incomingAdOpen || !splashDone) return;
-
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== 'visible') return;
-      setActiveTimeSeconds((prev) => {
-        const next = prev + 1;
-        if (next >= INCOMING_AD_INTERVAL_SECONDS) {
-          setIncomingAdProgressPct(0);
-          setIncomingAdOpen(true);
-          return 0;
-        }
-        return next;
-      });
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, [isAdminRoute, incomingAdOpen, splashDone]);
-
-  // Auto-close "Warning: Incoming Ad" overlay 1s after smooth 10s 0% -> 100% progress completes
-  useEffect(() => {
-    if (!incomingAdOpen) {
-      setIncomingAdProgressPct(0);
-      return;
-    }
-
-    const durationMs = INCOMING_AD_DURATION_SECONDS * 1000;
-    const startedAt = Date.now();
-    let closeTimer: number | undefined;
-    setIncomingAdProgressPct(2);
-
-    const progressTimer = window.setInterval(() => {
-      const elapsed = Date.now() - startedAt;
-      const pct = Math.min(100, (elapsed / durationMs) * 100);
-      setIncomingAdProgressPct(pct);
-      if (pct >= 100) {
-        window.clearInterval(progressTimer);
-        closeTimer = window.setTimeout(() => {
-          setIncomingAdOpen(false);
-          setActiveTimeSeconds(0);
-        }, 1000);
-      }
-    }, 100);
-
-    return () => {
-      window.clearInterval(progressTimer);
-      if (closeTimer !== undefined) {
-        window.clearTimeout(closeTimer);
-      }
-    };
-  }, [incomingAdOpen]);
 
   // Subtle Daily Streak Reminder once per day on first visit if today's check-in is open
   useEffect(() => {
@@ -547,26 +512,8 @@ function DramaWinApp() {
     qualificationThreshold,
   ]);
 
-  // Strict Anti-Cheat Sponsor Ad Timer (10-Second Rule)
-  const evaluateSponsorReturn = useCallback(async () => {
-    const pending = pendingSponsorRef.current;
-    if (!pending || !pending.leftTab) return;
-
-    pendingSponsorRef.current = null;
-    setPendingMysteryBoxNumber(null);
-
-    const elapsedSeconds = (Date.now() - pending.startedAt) / 1000;
-    if (elapsedSeconds < SPONSOR_MIN_VIEW_SECONDS) {
-      showToast(
-        pending.type === 'mystery-box'
-          ? 'Box locked! View the sponsor ad for 10 seconds to unlock your gift.'
-          : 'Reward cancelled! View the sponsor page for at least 10 seconds to earn coins.',
-        undefined,
-        'error'
-      );
-      return;
-    }
-
+  const handleOpenMysteryBox = (boxNumber: number) => {
+    const todayKey = getTodayDateKey();
     const {
       isCloudMode: cloudNow,
       currentPlayer: player,
@@ -575,192 +522,95 @@ function DramaWinApp() {
       muted: isMutedNow,
     } = latestStateRef.current;
 
-    const qualificationThreshold =
-      latestCfg.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
-    const todayKey = getTodayDateKey();
-    const currentWeek = getCurrentWeekKey();
+    if (cloudNow && firebaseUser) {
+      const nextOpened = Array.from(new Set([...cloudOpenedBoxes, boxNumber]));
+      setCloudOpenedBoxes(nextOpened);
+      writeCloudOpenedBoxes(firebaseUser.uid, todayKey, nextOpened);
 
-    if (pending.type === 'streak' && pending.dayKey) {
-      const baseClaimed = priv.weekKey === currentWeek ? priv.claimedDays || [] : [];
-      if (baseClaimed.includes(pending.dayKey)) return;
+      setMysteryReveal({
+        dateKey: todayKey,
+        boxNumber,
+        kind: 'coins',
+      });
+      showToast('Oops! Sorry, try the next box 😢');
 
-      if (cloudNow) {
-        const awarded = await claimStreakDay(
-          player,
-          priv,
-          pending.dayKey,
-          pending.reward,
-          qualificationThreshold
-        );
-        if (awarded) {
-          playCoinChime(isMutedNow);
-          showToast(`+${pending.reward} Coins Added! ${pending.dayKey} check-in`, pending.reward);
-        }
-      } else {
-        const nextClaimed = [...baseClaimed, pending.dayKey].slice(0, 7);
-        const res = applyLocalCoinMutation({
-          player,
-          privateProfile: priv,
-          walletDelta: pending.reward,
-          qualificationThreshold,
-          privateUpdates: {
-            weekKey: currentWeek,
-            claimedDays: nextClaimed,
-          },
-          nextStreakCount: nextClaimed.length,
-          recordStreakActivity: true,
-          txMeta: { category: 'streak', title: `${pending.dayKey} Daily Check-In` },
-        });
-        setGuestPlayer(res.player);
-        setGuestPrivate(res.privateProfile);
-        setLocalTransactions(res.transactions);
-        setLocalLeaderboard(loadLocalLeaderboard(res.player));
-        playCoinChime(isMutedNow);
-        showToast(`+${pending.reward} Coins Added! ${pending.dayKey} check-in`, pending.reward);
-      }
-    } else if (pending.type === 'mystery-box' && pending.boxNumber) {
-      try {
-        if (cloudNow) {
-          const result = await claimMysteryBox(
-            player,
-            priv,
-            pending.boxNumber,
-            Boolean(pending.paidWithCoins),
-            latestCfg
-          );
-          const revealPayload: MysteryRevealState = {
-            dateKey: todayKey,
-            boxNumber: pending.boxNumber,
-            kind: result.outcome.kind,
-            coins: result.outcome.coins,
-            winnerRecord: result.winnerRecord,
-            newPoolPrizeZar: result.newPoolPrizeZar,
-          };
-          setMysteryReveal(revealPayload);
-
-          if (result.outcome.kind === 'coins') {
-            playCoinChime(isMutedNow);
-            showToast(
-              `Oops sorry try the next box 😢 (+${result.outcome.coins} Coins added)`,
-              result.outcome.coins
-            );
-          } else if (result.winnerRecord) {
-            setConfettiActive(true);
-            playCoinChime(isMutedNow);
-            playVictoryFanfare(isMutedNow);
-            setMysteryVoucherModal({
-              winner: result.winnerRecord,
+      if (priv.lastMysteryPickDate !== todayKey) {
+        void claimMysteryBox(player, priv, boxNumber, false, latestCfg)
+          .then((result) => {
+            setMysteryReveal({
+              dateKey: todayKey,
+              boxNumber,
+              kind: result.outcome.kind,
+              coins: result.outcome.coins,
+              winnerRecord: result.winnerRecord,
               newPoolPrizeZar: result.newPoolPrizeZar,
             });
-            showToast('YOU WON CONGRATULATIONS! 🎉 R5 Airtime unlocked!');
-          }
-        } else {
-          const result = claimLocalMysteryBox({
-            player,
-            privateProfile: priv,
-            boxNumber: pending.boxNumber,
-            paidWithCoins: Boolean(pending.paidWithCoins),
-            appConfig: latestCfg,
+            if (result.outcome.kind === 'coins') {
+              playCoinChime(isMutedNow);
+              showToast('Oops! Sorry, try the next box 😢', result.outcome.coins);
+            } else if (result.winnerRecord) {
+              setConfettiActive(true);
+              playCoinChime(isMutedNow);
+              playVictoryFanfare(isMutedNow);
+              setMysteryVoucherModal({
+                winner: result.winnerRecord,
+                newPoolPrizeZar: result.newPoolPrizeZar,
+              });
+              showToast('YOU WON CONGRATULATIONS! 🎉 R5 Airtime unlocked!');
+            }
+          })
+          .catch(() => {
+            // Box already marked opened and message displayed on screen
           });
-          setGuestPlayer(result.player);
-          setGuestPrivate(result.privateProfile);
-          setLocalTransactions(result.transactions);
-          setLocalLeaderboard(loadLocalLeaderboard(result.player));
-          setLocalAppConfig(result.appConfig);
-          setLocalWinners(loadLocalMysteryWinners());
-
-          const revealPayload: MysteryRevealState = {
-            dateKey: todayKey,
-            boxNumber: pending.boxNumber,
-            kind: result.outcome.kind,
-            coins: result.outcome.coins,
-            winnerRecord: result.winnerRecord,
-            newPoolPrizeZar: result.newPoolPrizeZar,
-          };
-          setMysteryReveal(revealPayload);
-
-          if (result.outcome.kind === 'coins') {
-            playCoinChime(isMutedNow);
-            showToast(
-              `Oops sorry try the next box 😢 (+${result.outcome.coins} Coins added)`,
-              result.outcome.coins
-            );
-          } else if (result.winnerRecord) {
-            setConfettiActive(true);
-            playCoinChime(isMutedNow);
-            playVictoryFanfare(isMutedNow);
-            setMysteryVoucherModal({
-              winner: result.winnerRecord,
-              newPoolPrizeZar: result.newPoolPrizeZar,
-            });
-            showToast('YOU WON CONGRATULATIONS! 🎉 R5 Airtime unlocked!');
-          }
-        }
-      } catch (err) {
-        showToast(
-          err instanceof Error ? err.message : 'Unable to claim Mystery Box.',
-          undefined,
-          'error'
-        );
       }
+      return;
     }
-  }, [showToast]);
 
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      const pending = pendingSponsorRef.current;
-      if (!pending) return;
+    try {
+      const result = claimLocalMysteryBox({
+        player,
+        privateProfile: priv,
+        boxNumber,
+        paidWithCoins: false,
+        appConfig: latestCfg,
+      });
+      setGuestPlayer(result.player);
+      setGuestPrivate(result.privateProfile);
+      setLocalTransactions(result.transactions);
+      setLocalLeaderboard(loadLocalLeaderboard(result.player));
+      setLocalAppConfig(result.appConfig);
+      setLocalWinners(loadLocalMysteryWinners());
 
-      if (document.visibilityState === 'hidden') {
-        pending.leftTab = true;
-      } else if (document.visibilityState === 'visible' && pending.leftTab) {
-        void evaluateSponsorReturn();
+      const revealPayload: MysteryRevealState = {
+        dateKey: todayKey,
+        boxNumber,
+        kind: result.outcome.kind,
+        coins: result.outcome.coins,
+        winnerRecord: result.winnerRecord,
+        newPoolPrizeZar: result.newPoolPrizeZar,
+      };
+      setMysteryReveal(revealPayload);
+
+      if (result.outcome.kind === 'coins') {
+        playCoinChime(isMutedNow);
+        showToast('Oops! Sorry, try the next box 😢', result.outcome.coins);
+      } else if (result.winnerRecord) {
+        setConfettiActive(true);
+        playCoinChime(isMutedNow);
+        playVictoryFanfare(isMutedNow);
+        setMysteryVoucherModal({
+          winner: result.winnerRecord,
+          newPoolPrizeZar: result.newPoolPrizeZar,
+        });
+        showToast('YOU WON CONGRATULATIONS! 🎉 R5 Airtime unlocked!');
       }
-    };
-
-    const handleWindowBlur = () => {
-      if (pendingSponsorRef.current) {
-        pendingSponsorRef.current.leftTab = true;
-      }
-    };
-
-    const handleWindowFocus = () => {
-      const pending = pendingSponsorRef.current;
-      if (pending && pending.leftTab && Date.now() - pending.startedAt >= 250) {
-        void evaluateSponsorReturn();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('blur', handleWindowBlur);
-    window.addEventListener('focus', handleWindowFocus);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('blur', handleWindowBlur);
-      window.removeEventListener('focus', handleWindowFocus);
-    };
-  }, [evaluateSponsorReturn]);
-
-  const startSponsorTimer = (
-    type: PendingSponsorClaim['type'],
-    reward: number,
-    label: string,
-    dayKey?: WeekDayKey,
-    boxNumber?: number,
-    paidWithCoins?: boolean
-  ) => {
-    pendingSponsorRef.current = {
-      type,
-      startedAt: Date.now(),
-      leftTab: typeof document !== 'undefined' ? document.hidden || !document.hasFocus() : false,
-      reward,
-      dayKey,
-      boxNumber,
-      paidWithCoins,
-      label,
-    };
-    setPendingMysteryBoxNumber(boxNumber ?? null);
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Unable to open Mystery Box.',
+        undefined,
+        'error'
+      );
+    }
   };
 
   const handleCompleteDailyCheckIn = async (dayKey: WeekDayKey, reward: number) => {
@@ -836,16 +686,37 @@ function DramaWinApp() {
     showToast('Coins reset to 0 for testing.', undefined, 'neutral');
   };
 
-  const handleStartMysteryBoxSponsor = (boxNumber: number, paidWithCoins: boolean) => {
-    startSponsorTimer(
-      'mystery-box',
-      0,
-      `Mystery Box #${boxNumber}`,
-      undefined,
-      boxNumber,
-      paidWithCoins
-    );
-  };
+  const handleMarkEpisodeWatched = useCallback(async (episode: DramaEpisode): Promise<void> => {
+    const {
+      isCloudMode: cloudNow,
+      currentPlayer: playerNow,
+      privateProfile: privNow,
+      appConfig: cfgNow,
+    } = latestStateRef.current;
+
+    const nextWatched = mergeWatchedEpisodeId(privNow.watchedEpisodeIds || [], episode.id);
+    if (nextWatched.length === (privNow.watchedEpisodeIds || []).length) {
+      return;
+    }
+
+    if (cloudNow) {
+      await markEpisodeAsWatched(playerNow.uid, privNow, episode.id);
+      return;
+    }
+
+    const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
+    const res = applyLocalCoinMutation({
+      player: playerNow,
+      privateProfile: privNow,
+      walletDelta: 0,
+      qualificationThreshold: threshold,
+      privateUpdates: {
+        watchedEpisodeIds: nextWatched,
+      },
+    });
+    setGuestPlayer(res.player);
+    setGuestPrivate(res.privateProfile);
+  }, []);
 
   const handleAwardCoinPot = useCallback(
     async (episode: DramaEpisode, amount: number): Promise<void> => {
@@ -859,6 +730,7 @@ function DramaWinApp() {
 
       const safeAmount = Math.max(100, Math.min(300, Math.round(amount)));
       const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
+      const nextWatched = mergeWatchedEpisodeId(privNow.watchedEpisodeIds || [], episode.id);
 
       if (cloudNow) {
         await awardWatchPotCoins(
@@ -866,7 +738,8 @@ function DramaWinApp() {
           privNow,
           safeAmount,
           threshold,
-          episode.title
+          episode.title,
+          episode.id
         );
         playCoinPotCashChime(mutedNow);
         showToast(`+${safeAmount} Coins from Coin Pot!`, safeAmount);
@@ -878,6 +751,9 @@ function DramaWinApp() {
         privateProfile: privNow,
         walletDelta: safeAmount,
         qualificationThreshold: threshold,
+        privateUpdates: {
+          watchedEpisodeIds: nextWatched,
+        },
         recordStreakActivity: true,
         txMeta: {
           category: 'episode',
@@ -968,13 +844,17 @@ function DramaWinApp() {
 
     const activeUser = await ensureFirebaseAdminGrant();
     if (activeUser) {
+      const targetSeriesId = toSeriesId(cleanNew);
+      const oldSeriesId = toSeriesId(oldName);
       const matching = (cloudEpisodes.length > 0 ? cloudEpisodes : episodes).filter(
-        (ep) => ep.series === oldName
+        (ep) => ep.series === oldName || getEpisodeSeriesId(ep) === oldSeriesId
       );
       for (const ep of matching) {
         await updateDramaEpisode(ep.id, {
           title: ep.title,
           series: cleanNew,
+          seriesId: targetSeriesId,
+          category: inferEpisodeCategory(cleanNew, ep.title, ep.category),
           episodeLabel: ep.episodeLabel,
           duration: ep.duration,
           rewardCoins: ep.rewardCoins,
@@ -1136,19 +1016,29 @@ function DramaWinApp() {
 
   const handleAddEpisode = async (input: AdminEpisodeFormInput & { sortOrder: number }) => {
     const episodeId = `ep-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const payload = { ...input, id: episodeId };
-    const nextList = addLocalEpisode(payload);
+    const normalizedInput: AdminEpisodeFormInput & { sortOrder: number; id: string } = {
+      ...input,
+      id: episodeId,
+      seriesId: getEpisodeSeriesId({ series: input.series, seriesId: input.seriesId }),
+      category: inferEpisodeCategory(input.series, input.title, input.category),
+    };
+    const nextList = addLocalEpisode(normalizedInput);
     setLocalEpisodes(nextList);
     setSections(loadLocalSections(nextList));
 
     const activeUser = await ensureFirebaseAdminGrant();
     if (activeUser) {
-      await addDramaEpisode(payload);
+      await addDramaEpisode(normalizedInput);
     }
   };
 
   const handleUpdateEpisode = async (episodeId: string, input: AdminEpisodeFormInput) => {
-    const nextList = updateLocalEpisode(episodeId, input);
+    const normalizedInput: AdminEpisodeFormInput = {
+      ...input,
+      seriesId: getEpisodeSeriesId({ series: input.series, seriesId: input.seriesId }),
+      category: inferEpisodeCategory(input.series, input.title, input.category),
+    };
+    const nextList = updateLocalEpisode(episodeId, normalizedInput);
     setLocalEpisodes(nextList);
     setSections(loadLocalSections(nextList));
     const matchedSortOrder =
@@ -1158,7 +1048,10 @@ function DramaWinApp() {
 
     const activeUser = await ensureFirebaseAdminGrant();
     if (activeUser) {
-      await updateDramaEpisode(episodeId, { ...input, sortOrder: matchedSortOrder });
+      await updateDramaEpisode(episodeId, {
+        ...normalizedInput,
+        sortOrder: matchedSortOrder,
+      });
     }
   };
 
@@ -1281,25 +1174,14 @@ function DramaWinApp() {
     );
   }
 
-  const effectiveSponsorUrl = appConfig.sponsorAdUrl || DEFAULT_SPONSOR_URL;
-  const embeddedAdHtml = appConfig.embeddedAdHtml || '';
-  const hasActiveBottomAd = Boolean(embeddedAdHtml.trim());
-
   return (
-    <div
-      className={`min-h-screen bg-[#070709] text-[#F6F2E9] ${
-        hasActiveBottomAd ? 'pb-24' : 'pb-6'
-      }`}
-    >
+    <div className="min-h-screen bg-[#070709] text-[#F6F2E9] pb-20">
       {!splashDone && <VipSplashScreen onComplete={() => setSplashDone(true)} />}
 
       <ConfettiExplosion
         active={confettiActive}
         onComplete={() => setConfettiActive(false)}
       />
-
-      {/* Global 20-Second "Warning: Incoming Ad" Overlay triggered every 60s of active time */}
-      <IncomingAdOverlay open={incomingAdOpen} progressPct={incomingAdProgressPct} />
 
       <TopHeader
         coins={currentPlayer.coins}
@@ -1386,22 +1268,20 @@ function DramaWinApp() {
             playerTotalCoins={currentPlayer.coins}
             qualificationThreshold={qualificationThreshold}
             muted={muted}
-            adPaused={incomingAdOpen || pendingMysteryBoxNumber !== null}
-            embeddedAdHtml={embeddedAdHtml}
             onToggleMute={handleToggleMute}
             onAwardCoinPot={handleAwardCoinPot}
+            onMarkEpisodeWatched={handleMarkEpisodeWatched}
           />
         )}
 
         {activeTab === 'vault' && (
           <CheckInVaultTab
             privateState={privateProfile}
-            sponsorAdUrl={effectiveSponsorUrl}
-            pendingMysteryBoxNumber={pendingMysteryBoxNumber}
+            openedBoxesOverride={isCloudMode ? cloudOpenedBoxes : undefined}
             mysteryReveal={mysteryReveal}
             voucherModal={mysteryVoucherModal}
             onCompleteCheckIn={handleCompleteDailyCheckIn}
-            onStartMysteryBoxSponsor={handleStartMysteryBoxSponsor}
+            onOpenMysteryBox={handleOpenMysteryBox}
             onDismissVoucherModal={() => setMysteryVoucherModal(null)}
           />
         )}
@@ -1445,8 +1325,8 @@ function DramaWinApp() {
         </footer>
       </main>
 
-      {/* Active Embedded Bottom Ad Container (collapses completely when no ad is active) */}
-      <BottomAdBanner embeddedAdHtml={embeddedAdHtml} />
+      {/* Fixed 320x50 Bottom Ad Banner */}
+      <BottomAdBanner />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import React, { useId, useState } from 'react';
-import { Sparkles, Check, Copy, X, Trophy, Timer, ExternalLink, PartyPopper } from 'lucide-react';
-import { BRAND_NAME, DEFAULT_SPONSOR_URL, SPONSOR_MIN_VIEW_SECONDS } from '../constants';
+import { Sparkles, Check, Copy, X, Trophy, ExternalLink, PartyPopper } from 'lucide-react';
+import { BRAND_NAME } from '../constants';
 import { MysteryWinnerRecord, PlayerPrivate } from '../types';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
@@ -22,16 +22,15 @@ export interface MysteryRevealState {
 
 interface MysteryVaultCardProps {
   privateState: PlayerPrivate;
-  sponsorAdUrl: string;
   todayKey: string;
-  pendingMysteryBoxNumber: number | null;
+  openedBoxesOverride?: number[];
   mysteryReveal: MysteryRevealState | null;
   voucherModal: {
     winner: MysteryWinnerRecord;
     newPoolPrizeZar?: number;
   } | null;
   highlightVault?: boolean;
-  onStartMysteryBoxSponsor: (boxNumber: number, paidWithCoins: boolean) => void;
+  onOpenMysteryBox: (boxNumber: number) => void;
   onDismissVoucherModal: () => void;
 }
 
@@ -147,24 +146,25 @@ export const Gold3DGiftIcon: React.FC<{
 };
 
 export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
-  sponsorAdUrl,
   todayKey,
   privateState,
-  pendingMysteryBoxNumber,
+  openedBoxesOverride,
   mysteryReveal,
   voucherModal,
   highlightVault = false,
-  onStartMysteryBoxSponsor,
+  onOpenMysteryBox,
   onDismissVoucherModal,
 }) => {
   const [copied, setCopied] = useState(false);
 
-  const openedTodayList =
+  const storedOpenedList =
     privateState.openedMysteryBoxesDate === todayKey
       ? privateState.openedMysteryBoxesToday || []
       : [];
+  const openedTodayList = Array.from(
+    new Set([...storedOpenedList, ...(openedBoxesOverride || [])])
+  );
   const allBoxesOpenedToday = openedTodayList.length >= 12;
-  const effectiveSponsorUrl = sponsorAdUrl?.trim() || DEFAULT_SPONSOR_URL;
 
   const activeRevealForToday =
     mysteryReveal && mysteryReveal.dateKey === todayKey ? mysteryReveal : null;
@@ -205,7 +205,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
               </h2>
             </div>
             <p className="text-xs sm:text-sm text-[#BFB7A6]">
-              Tap any glowing gift box to view the sponsor page for {SPONSOR_MIN_VIEW_SECONDS}+ seconds and unlock bonus coins or the R5 Airtime jackpot.
+              Tap any glowing gift box to open it and unlock bonus coins or the R5 Airtime jackpot.
             </p>
           </div>
 
@@ -243,7 +243,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                 <div className="flex items-center gap-2.5">
                   <RealisticGoldCoin sizePx={48} emblem="$" className="shrink-0" />
                   <span className="font-semibold">
-                    Box #{activeRevealForToday.boxNumber}: Oops sorry try the next box 😢
+                    Oops! Sorry, try the next box 😢
                   </span>
                 </div>
                 {activeRevealForToday.coins ? (
@@ -256,15 +256,6 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
           </div>
         )}
 
-        {pendingMysteryBoxNumber !== null && (
-          <div className="relative rounded-xl bg-[#1A1508] border border-[#D4AF37]/45 px-4 py-2.5 flex items-center gap-2 text-xs text-[#FCE7A2]">
-            <Timer className="w-4 h-4 text-[#D4AF37] shrink-0" />
-            <span>
-              Verifying <strong>Box #{pendingMysteryBoxNumber}</strong> — stay on the sponsor page for at least {SPONSOR_MIN_VIEW_SECONDS} seconds before returning.
-            </span>
-          </div>
-        )}
-
         {/* 3x4 Grid of 12 Glowing Black & Gold Mystery Gift Boxes */}
         <div className="relative grid grid-cols-3 sm:grid-cols-4 gap-3 sm:gap-4">
           {Array.from({ length: 12 }, (_, idx) => {
@@ -272,7 +263,6 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
             const isOpenedToday = openedTodayList.includes(boxNumber);
             const isLatestPicked = activeRevealForToday?.boxNumber === boxNumber;
             const isWonR5 = isLatestPicked && activeRevealForToday?.kind === 'airtime';
-            const isPending = pendingMysteryBoxNumber === boxNumber;
             const isInteractive = !isOpenedToday;
             const shimmerDelay = `${(idx % 4) * 0.45}s`;
 
@@ -281,13 +271,11 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                 ? isWonR5
                   ? 'bg-gradient-to-b from-[#45330E] via-[#241A07] to-[#0D0A04] border-[#FFF5C8] shadow-[0_0_34px_rgba(252,231,162,0.55),inset_0_1px_0_rgba(255,250,224,0.7)]'
                   : 'bg-gradient-to-b from-[#1A160D] via-[#100E09] to-[#08080A] border-[#D4AF37]/30 opacity-80 cursor-not-allowed'
-                : isPending
-                  ? 'bg-gradient-to-b from-[#2F240D] via-[#171209] to-[#080705] border-[#FCE7A2] shadow-[0_0_28px_rgba(252,231,162,0.4)]'
-                  : `bg-gradient-to-b from-[#251E0D] via-[#131009] to-[#070708] hover:border-[#FFF0B8] hover:-translate-y-0.5 hover:scale-[1.03] active:scale-[0.97] cursor-pointer ${
+                : `bg-gradient-to-b from-[#251E0D] via-[#131009] to-[#070708] hover:border-[#FFF0B8] hover:-translate-y-0.5 hover:scale-[1.03] active:scale-[0.97] cursor-pointer ${
                     highlightVault
                       ? 'border-[#FFF0B8] ring-2 ring-[#FCE7A2]/85 mystery-vault-highlight'
                       : 'border-[#D4AF37]/65 shadow-[0_0_24px_rgba(212,175,55,0.22),inset_0_1px_0_rgba(252,231,162,0.45)] hover:shadow-[0_0_34px_rgba(252,231,162,0.42),inset_0_1px_0_rgba(255,248,220,0.7)]'
-                    }`
+                  }`
             }`;
 
             const innerContent = (
@@ -338,7 +326,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                           😢
                         </div>
                         <span className="text-[10px] font-semibold text-[#C4BDB0] leading-tight">
-                          Try next box
+                          Opened
                         </span>
                       </>
                     )}
@@ -348,19 +336,15 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                   </div>
                 ) : (
                   <>
-                    <div className={`relative z-10 ${isPending ? 'animate-pulse' : ''}`}>
-                      <Gold3DGiftIcon unlocked={isInteractive} opened={isPending} />
+                    <div className="relative z-10">
+                      <Gold3DGiftIcon unlocked={isInteractive} />
                     </div>
 
                     <div className="relative z-10 flex items-center gap-1">
-                      <span
-                        className={`font-mono-num text-xs font-bold tracking-wider ${
-                          isPending ? 'text-[#FFF4CE]' : 'text-[#FCE7A2]'
-                        }`}
-                      >
-                        {isPending ? '10s Visit...' : `#${boxNumber}`}
+                      <span className="font-mono-num text-xs font-bold tracking-wider text-[#FCE7A2]">
+                        #{boxNumber}
                       </span>
-                      {!isPending && <ExternalLink className="w-3 h-3 text-[#D4AF37]/80" />}
+                      <ExternalLink className="w-3 h-3 text-[#D4AF37]/80" />
                     </div>
                   </>
                 )}
@@ -373,8 +357,8 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                   key={boxNumber}
                   type="button"
                   onClick={() => {
-                    window.open(effectiveSponsorUrl, '_blank', 'noopener,noreferrer');
-                    onStartMysteryBoxSponsor(boxNumber, false);
+                    window.open('https://asiafilm.org', '_blank');
+                    onOpenMysteryBox(boxNumber);
                   }}
                   aria-label={`Open Mystery Gift Box ${boxNumber}`}
                   className={boxClasses}
