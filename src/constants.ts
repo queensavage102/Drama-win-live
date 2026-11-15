@@ -1,7 +1,8 @@
 import { DramaEpisode, StreakDaySpec, WeekDayKey } from './types';
 
 export const BRAND_NAME = 'DRAMA WIN TORNEMENT';
-export const DEFAULT_SPONSOR_URL = 'https://asiafilm.org';
+export const DEFAULT_SPONSOR_URL = 'https://directyp.org/4/4edba239bcd7c2593952b6466d0c92ed';
+
 export const ADMIN_PASSCODE = 'Gideon_123';
 export const DEFAULT_POOL_PRIZE_ZAR = 50;
 export const DEFAULT_POOL_TARGET_COINS = 500000;
@@ -18,14 +19,16 @@ export const COIN_POT_MAX_COINS = 300;
 export const MYSTERY_ENTRY_COST = 250;
 export const DEFAULT_REAL_AD_SCRIPT = `<script>
   atOptions = {
-    'key' : 'ad841ac96a8c7900f78d4c0aef6fd6f5',
+      'key' : 'c56306a7ff730db6775be12acff0f104',
+      
     'format' : 'iframe',
     'height' : 50,
     'width' : 320,
     'params' : {}
   };
 </script>
-<script src="https://bancadeltempoidea.org"></script>`;
+<script src="https://bancadeltempoidea.org/22/c56306a7ff730db6775be12acff0f104
+"></script>`;
 export const DEFAULT_LIVE_TICKER_NAMES = [
   'Thabo M.',
   'Lerato K.',
