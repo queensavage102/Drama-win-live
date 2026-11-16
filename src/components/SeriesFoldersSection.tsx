@@ -761,16 +761,8 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                 />
               ))}
             </div>
-
-            <div className="w-[320px] min-h-[50px] h-[50px] mx-auto overflow-hidden flex items-center justify-center">
-              <BottomAdBanner />
-            </div>
           </div>
-        ) : (
-          <div className="w-[320px] min-h-[50px] h-[50px] mx-auto overflow-hidden flex items-center justify-center">
-            <BottomAdBanner />
-          </div>
-        )}
+        ) : null}
       </section>
 
       {/* Episode Selection Modal (Strictly filtered by exact seriesId) */}

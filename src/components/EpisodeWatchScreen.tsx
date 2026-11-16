@@ -12,9 +12,8 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import {
+  COIN_POT_BASE_REWARD,
   COIN_POT_CYCLE_SECONDS,
-  COIN_POT_MAX_COINS,
-  COIN_POT_MIN_COINS,
   DEFAULT_SPONSOR_URL,
   getYouTubeEmbedUrl,
   isYouTubeDomainOnly,
@@ -22,10 +21,12 @@ import {
 } from '../constants';
 import { DramaEpisode } from '../types';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
+import { DoubleRewardModal } from './DoubleRewardModal';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 interface EpisodeWatchScreenProps {
   episode: DramaEpisode;
+  sponsorAdUrl?: string;
   playerWeeklyCoins: number;
   playerTotalCoins: number;
   qualificationThreshold: number;
@@ -179,12 +180,24 @@ const isDirectVideoMediaUrl = (url: string): boolean => {
   return /\.(mp4|webm|ogg|mov|m4v|m3u8)(\?|#|$)/i.test(url);
 };
 
+function postYouTubeCommand(iframe: HTMLIFrameElement | null, func: string) {
+  try {
+    iframe?.contentWindow?.postMessage(
+      JSON.stringify({ event: 'command', func, args: [] }),
+      '*'
+    );
+  } catch {
+    // Ignore cross-origin postMessage restrictions
+  }
+}
+
 const WatchVideoStage: React.FC<{
   episode: DramaEpisode;
   zoomed: boolean;
+  paused: boolean;
   onPlayingChange?: (playing: boolean) => void;
   onVideoEnded?: () => void;
-}> = ({ episode, zoomed, onPlayingChange, onVideoEnded }) => {
+}> = ({ episode, zoomed, paused, onPlayingChange, onVideoEnded }) => {
   const rawVideoUrl = sanitizeMediaUrl((episode.videoUrl || episode.youtubeUrl || '').trim());
   const embedUrl = rawVideoUrl ? getYouTubeEmbedUrl(rawVideoUrl) : null;
   const bareYouTubeDomain = rawVideoUrl ? isYouTubeDomainOnly(rawVideoUrl) : false;
@@ -202,6 +215,19 @@ const WatchVideoStage: React.FC<{
   useEffect(() => {
     onVideoEndedRef.current = onVideoEnded;
   }, [onVideoEnded]);
+
+  useEffect(() => {
+    if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
+      postYouTubeCommand(iframeRef.current, paused ? 'pauseVideo' : 'playVideo');
+    }
+    if (videoRef.current) {
+      if (paused) {
+        videoRef.current.pause();
+      } else {
+        void videoRef.current.play().catch(() => {});
+      }
+    }
+  }, [paused, embedUrl, resolvedMediaUrl]);
 
   useEffect(() => {
     if (!embedUrl && !resolvedMediaUrl) return;
@@ -271,7 +297,7 @@ const WatchVideoStage: React.FC<{
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
         allowFullScreen
         className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
-          zoomed ? 'scale-[1.35]' : 'scale-100'
+          zoomed ? 'object-cover scale-[1.8]' : 'object-contain scale-100'
         }`}
       />
     );
@@ -294,7 +320,7 @@ const WatchVideoStage: React.FC<{
             onVideoEndedRef.current?.();
           }}
           className={`absolute inset-0 w-full h-full bg-black transition-transform duration-300 ease-out origin-center ${
-            zoomed ? 'object-cover scale-[1.35]' : 'object-contain scale-100'
+            zoomed ? 'object-cover scale-[1.8]' : 'object-contain scale-100'
           }`}
         />
       );
@@ -317,7 +343,7 @@ const WatchVideoStage: React.FC<{
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
         allowFullScreen
         className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
-          zoomed ? 'scale-[1.35]' : 'scale-100'
+          zoomed ? 'object-cover scale-[1.8]' : 'object-contain scale-100'
         }`}
       />
     );
@@ -337,6 +363,7 @@ const WatchVideoStage: React.FC<{
 
 export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   episode,
+  sponsorAdUrl,
   playerWeeklyCoins,
   playerTotalCoins,
   qualificationThreshold,
@@ -346,13 +373,10 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   onMarkEpisodeWatched,
   onClose,
 }) => {
-  const potReward = Math.max(
-    COIN_POT_MIN_COINS,
-    Math.min(COIN_POT_MAX_COINS, Math.round(episode.rewardCoins || COIN_POT_MIN_COINS))
-  );
+  const potReward = COIN_POT_BASE_REWARD;
 
   const [ringProgress, setRingProgress] = useState(0);
-  const [potReadyToCollect, setPotReadyToCollect] = useState(false);
+  const [rewardModalOpen, setRewardModalOpen] = useState(false);
   const [barPulse, setBarPulse] = useState(false);
   const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
@@ -360,7 +384,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const awardingRef = useRef(false);
-  const potReadyRef = useRef(false);
+  const rewardModalOpenRef = useRef(false);
   const resetPotTimerRef = useRef(false);
   const onAwardRef = useRef(onAwardCoinPot);
   const episodeRef = useRef(episode);
@@ -373,6 +397,9 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   useEffect(() => {
     episodeRef.current = episode;
     isVideoPlayingRef.current = true;
+    rewardModalOpenRef.current = false;
+    setRewardModalOpen(false);
+    setIsZoomed(true);
   }, [episode]);
 
   useEffect(() => {
@@ -396,14 +423,14 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     };
   }, []);
 
-  // Fills Coin Pot up to 100% and pauses until user taps Collect
+  // Fills Coin Ring up to 100%, pauses video, and opens the +300 / +600 Congratulations modal
   useEffect(() => {
     const cycleMs = COIN_POT_CYCLE_SECONDS * 1000;
     let elapsedMs = 0;
     let lastTick = Date.now();
-    potReadyRef.current = false;
+    rewardModalOpenRef.current = false;
     resetPotTimerRef.current = false;
-    setPotReadyToCollect(false);
+    setRewardModalOpen(false);
     setRingProgress(0);
 
     const interval = window.setInterval(() => {
@@ -416,7 +443,11 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         resetPotTimerRef.current = false;
       }
 
-      if (document.visibilityState !== 'visible' || !isVideoPlayingRef.current || potReadyRef.current) {
+      if (
+        document.visibilityState !== 'visible' ||
+        !isVideoPlayingRef.current ||
+        rewardModalOpenRef.current
+      ) {
         return;
       }
 
@@ -424,9 +455,10 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       const pct = Math.min(100, (elapsedMs / cycleMs) * 100);
       setRingProgress(pct);
 
-      if (pct >= 100 && !potReadyRef.current) {
-        potReadyRef.current = true;
-        setPotReadyToCollect(true);
+      if (pct >= 100 && !rewardModalOpenRef.current) {
+        rewardModalOpenRef.current = true;
+        isVideoPlayingRef.current = false;
+        setRewardModalOpen(true);
         setBarPulse(true);
       }
     }, 100);
@@ -434,31 +466,29 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     return () => window.clearInterval(interval);
   }, [episode.id, potReward]);
 
-  const handleCollectCoinPot = () => {
-    if (!potReadyRef.current || awardingRef.current) return;
+  const handleClaimPotReward = async (amount: number) => {
+    if (awardingRef.current) return;
     awardingRef.current = true;
 
-    // Trigger Smartlink on user tap so mobile browsers never block it
-    window.open(DEFAULT_SPONSOR_URL, '_blank', 'noopener,noreferrer');
-
-    const burstId = Date.now();
-    setFlyingBurst({ id: burstId, amount: potReward });
-    setBarPulse(true);
-    window.setTimeout(() => {
-      setBarPulse(false);
-    }, 1000);
-    window.setTimeout(() => {
-      setFlyingBurst((curr) => (curr?.id === burstId ? null : curr));
-    }, 1250);
-
-    potReadyRef.current = false;
-    resetPotTimerRef.current = true;
-    setPotReadyToCollect(false);
-    setRingProgress(0);
-
-    void onAwardRef.current(episodeRef.current, potReward).finally(() => {
+    try {
+      await onAwardRef.current(episodeRef.current, amount);
+      const burstId = Date.now();
+      setFlyingBurst({ id: burstId, amount });
+      setBarPulse(true);
+      window.setTimeout(() => {
+        setBarPulse(false);
+      }, 1000);
+      window.setTimeout(() => {
+        setFlyingBurst((curr) => (curr?.id === burstId ? null : curr));
+      }, 1250);
+    } finally {
+      rewardModalOpenRef.current = false;
+      resetPotTimerRef.current = true;
+      isVideoPlayingRef.current = true;
+      setRewardModalOpen(false);
+      setRingProgress(0);
       awardingRef.current = false;
-    });
+    }
   };
   
 
@@ -567,7 +597,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                 onClick={() => setIsZoomed((prev) => !prev)}
                 aria-pressed={isZoomed}
                 aria-label={isZoomed ? 'Zoomed full-screen — tap to switch to Fit' : 'Standard Fit — tap to Zoom'}
-                title={isZoomed ? 'Zoomed (1.35x) — tap for Fit' : 'Fit — tap for Zoom'}
+                title={isZoomed ? 'Zoomed (1.8x) — tap for Fit' : 'Fit — tap for Zoom'}
                 className={`min-h-[38px] px-2.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
                   isZoomed
                     ? 'border-[#D4AF37]/45 bg-[#17130A] text-[#FCE7A2]'
@@ -666,8 +696,11 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
           <WatchVideoStage
             episode={episode}
             zoomed={isZoomed}
+            paused={rewardModalOpen}
             onPlayingChange={(playing) => {
-              isVideoPlayingRef.current = playing;
+              if (!rewardModalOpenRef.current) {
+                isVideoPlayingRef.current = playing;
+              }
             }}
             onVideoEnded={() => {
               void onMarkEpisodeWatched?.(episodeRef.current);
@@ -735,21 +768,21 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
               <TreasureCoinPot3D ringProgress={ringProgress} pulsing={barPulse} />
             </div>
-     {potReadyToCollect ? (
-       <button
-         type="button"
-         onClick={handleCollectCoinPot}
-         className="mt-1 px-3 py-1.5 rounded-full bg-gradient-to-r from-[#FCE7A2] via-[#FFF6D6] to-[#D4AF37] text-[#181307] font-bold text-xs shadow-lg animate-bounce cursor-pointer"
-       >
-         Collect +{potReward}
-       </button>
-     ) : (
-       <span className="px-2.5 py-0.5 rounded-full bg-black/85 border border-[#D4AF37]/55 font-mono-num text-[11px] text-[#FCE7A2]">
-         +{potReward} / pot
-                           </span>
-        )}
+            <span className="mt-1 px-2.5 py-0.5 rounded-full bg-black/85 border border-[#D4AF37]/55 font-mono-num text-[11px] font-bold text-[#FCE7A2]">
+              +{potReward}
+            </span>
+          </div>
+        </div>
       </div>
-          
+
+      <DoubleRewardModal
+        open={rewardModalOpen}
+        baseCoins={potReward}
+        sponsorUrl={episode.sponsorUrl || sponsorAdUrl || DEFAULT_SPONSOR_URL}
+        episodeTitle={`${episode.series} — ${episode.episodeLabel}`}
+        onClaimDouble={() => handleClaimPotReward(potReward * 2)}
+        onClaimBase={() => handleClaimPotReward(potReward)}
+      />
     </div>
   );
 };

@@ -14,8 +14,10 @@ export const BANNER_AD_COINS = 25;
 export const BANNER_COOLDOWN_MS = 15000;
 export const VIDEO_MIN_WATCH_SECONDS = 30;
 export const COIN_POT_CYCLE_SECONDS = 20;
+export const COIN_POT_BASE_REWARD = 300;
 export const COIN_POT_MIN_COINS = 100;
 export const COIN_POT_MAX_COINS = 300;
+export const DEFAULT_VIDEO_START_SECONDS = 28;
 export const MYSTERY_ENTRY_COST = 250;
 export const DEFAULT_REAL_AD_SCRIPT = `<script>
   atOptions = {
@@ -168,6 +170,53 @@ export function isLegacyBrokenEpisode(ep: Partial<DramaEpisode> | null | undefin
     return true;
   }
   return false;
+}
+
+export function normalizeEpisodeStartSeconds(value?: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.min(36000, Math.floor(value)));
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.min(36000, Math.floor(parsed)));
+    }
+  }
+  return DEFAULT_VIDEO_START_SECONDS;
+}
+
+export function getCanonicalVideoKey(rawUrl?: string): string {
+  const cleaned = (rawUrl || '').trim();
+  if (!cleaned) return '';
+  const yt = extractYouTubeMedia(cleaned);
+  if (yt.videoId) return `yt:${yt.videoId}`;
+  if (yt.playlistId) return `ytpl:${yt.playlistId}`;
+  return cleaned.toLowerCase();
+}
+
+export function deduplicateEpisodeList(list: DramaEpisode[]): DramaEpisode[] {
+  const seenIds = new Set<string>();
+  const seenSeriesVideo = new Set<string>();
+  const sorted = [...list].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const result: DramaEpisode[] = [];
+
+  for (const ep of sorted) {
+    if (!ep || isLegacyBrokenEpisode(ep)) continue;
+    if (ep.id && seenIds.has(ep.id)) continue;
+
+    const seriesId = getEpisodeSeriesId(ep);
+    const videoKey = getCanonicalVideoKey(ep.videoUrl || ep.youtubeUrl);
+    if (videoKey) {
+      const sig = `${seriesId}::${videoKey}`;
+      if (seenSeriesVideo.has(sig)) continue;
+      seenSeriesVideo.add(sig);
+    }
+
+    if (ep.id) seenIds.add(ep.id);
+    result.push(ep);
+  }
+
+  return result;
 }
 
 export const STREAK_DAYS: StreakDaySpec[] = [
@@ -365,6 +414,13 @@ export function getSundayCountdown(now = new Date()): CountdownParts {
     minutes: String(minutes).padStart(2, '0'),
     seconds: String(seconds).padStart(2, '0'),
   };
+}
+
+export function isLegacyOrBareSponsorUrl(raw?: string): boolean {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return true;
+  if (!/^https?:\/\//i.test(trimmed)) return true;
+  return trimmed === 'https://directyp.org' || trimmed === 'https://directyp.org/';
 }
 
 export function sanitizeExternalUrl(raw: string): string {
@@ -638,8 +694,14 @@ export function getYouTubeThumbnailUrl(rawUrl: string): string | null {
   return extractYouTubeMedia(rawUrl).thumbnailUrl;
 }
 
-export function getYouTubeEmbedUrl(rawUrl: string): string | null {
-  return extractYouTubeMedia(rawUrl).embedUrl;
+export function getYouTubeEmbedUrl(rawUrl: string, startSeconds?: number): string | null {
+  const baseUrl = extractYouTubeMedia(rawUrl).embedUrl;
+  if (!baseUrl) return null;
+  if (typeof startSeconds === 'number' && Number.isFinite(startSeconds) && startSeconds > 0 && !baseUrl.includes('start=')) {
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${sep}start=${Math.floor(startSeconds)}`;
+  }
+  return baseUrl;
 }
 
 export function getYouTubePreviewEmbedUrl(rawUrl: string): string | null {

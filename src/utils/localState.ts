@@ -156,7 +156,7 @@ export function mergeLeaderboardWithSeedPlayers(
     map.set(seed.uid, {
       uid: seed.uid,
       username: seed.username,
-      avatar: seed.avatar,
+      avatar: (seed as { avatar?: string }).avatar || seed.username.slice(0, 2).toUpperCase(),
       coins: seed.coins,
       weeklyCoins: seed.weeklyCoins,
       qualified: seed.weeklyCoins >= DEFAULT_QUALIFICATION_THRESHOLD,

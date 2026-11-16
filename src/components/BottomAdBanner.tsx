@@ -35,7 +35,7 @@ export const BottomAdBanner: React.FC = () => {
   return (
     <div
       style={{ backgroundColor: '#09090b', colorScheme: 'dark' }}
-      className="w-full py-1.5 bg-[#09090b] border-t border-white/10 flex items-center justify-center relative z-[80]"
+      className="w-full bg-[#09090b] flex items-center justify-center"
     >
       <div
         style={{ backgroundColor: '#09090b', colorScheme: 'dark' }}
