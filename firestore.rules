@@ -72,9 +72,24 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidSeries(data) {
+      return data.keys().hasAll(['seriesId', 'title', 'category', 'coverImage', 'synopsis', 'episodeIds', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['seriesId', 'title', 'category', 'coverImage', 'synopsis', 'episodeIds', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.seriesId is string && data.seriesId.size() >= 1 && data.seriesId.size() <= 80 && data.seriesId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 60
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 32
+        && data.coverImage is string && data.coverImage.size() >= 1 && data.coverImage.size() <= 500
+        && data.synopsis is string && data.synopsis.size() >= 1 && data.synopsis.size() <= 240
+        && data.episodeIds is list && data.episodeIds.size() <= 100 && (data.episodeIds.size() == 0 || data.episodeIds[0] is string)
+        && data.sortOrder is number && data.sortOrder >= 0 && data.sortOrder <= 10000
+        && data.isPublic is bool && data.isPublic == true
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidEpisode(data) {
       return data.keys().hasAll(['title', 'series', 'episodeLabel', 'duration', 'rewardCoins', 'coverImage', 'synopsis', 'sponsorUrl', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['title', 'series', 'seriesId', 'category', 'episodeLabel', 'duration', 'rewardCoins', 'coverImage', 'synopsis', 'sponsorUrl', 'youtubeUrl', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'series', 'seriesId', 'category', 'episodeLabel', 'duration', 'rewardCoins', 'coverImage', 'synopsis', 'sponsorUrl', 'youtubeUrl', 'startTime', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
         && data.series is string && data.series.size() >= 1 && data.series.size() <= 60
         && (!('seriesId' in data) || (data.seriesId is string && data.seriesId.size() >= 1 && data.seriesId.size() <= 80))
@@ -86,6 +101,7 @@ service cloud.firestore {
         && data.synopsis is string && data.synopsis.size() >= 1 && data.synopsis.size() <= 240
         && data.sponsorUrl is string && data.sponsorUrl.size() <= 500
         && (!('youtubeUrl' in data) || (data.youtubeUrl is string && data.youtubeUrl.size() <= 500))
+        && (!('startTime' in data) || (data.startTime is number && data.startTime >= 0 && data.startTime <= 86400))
         && data.sortOrder is number && data.sortOrder >= 0 && data.sortOrder <= 10000
         && data.isPublic is bool && data.isPublic == true
         && data.createdAt is timestamp
@@ -252,6 +268,26 @@ service cloud.firestore {
           );
         allow update, delete: if false;
       }
+    }
+
+    // Featured drama series folders (publicly readable catalog; admin-only writes)
+    match /series/{seriesId} {
+      allow get: if isValidId(seriesId) && (resource == null || existing().isPublic == true);
+      allow list: if existing().isPublic == true;
+      allow create: if isAdmin()
+        && isValidId(seriesId)
+        && isValidSeries(incoming())
+        && incoming().seriesId == seriesId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(seriesId)
+        && isValidSeries(incoming())
+        && incoming().seriesId == existing().seriesId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'coverImage', 'synopsis', 'episodeIds', 'sortOrder', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(seriesId);
     }
 
     // Featured short-drama episodes (publicly readable catalog; admin-only writes)

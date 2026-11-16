@@ -28,14 +28,17 @@ import {
   DEFAULT_LIVE_TICKER_NAMES,
   DEFAULT_POOL_PRIZE_ZAR,
   DEFAULT_REAL_AD_SCRIPT,
+  DEFAULT_VIDEO_START_SECONDS,
   DRAMA_CATEGORIES,
   extractYouTubeId,
   extractYouTubePlaylistId,
+  getCanonicalVideoKey,
   getEpisodeSeriesId,
   getYouTubePreviewEmbedUrl,
   getYouTubeThumbnailUrl,
   inferEpisodeCategory,
   isYouTubeDomainOnly,
+  normalizeEpisodeStartSeconds,
   sanitizeMediaUrl,
   toSeriesId,
 } from '../constants';
@@ -62,6 +65,7 @@ export interface AdminEpisodeFormInput {
   sponsorUrl: string;
   youtubeUrl?: string;
   videoUrl?: string;
+  startTime?: number;
 }
 
 interface AdminBoardPageProps {
@@ -76,7 +80,7 @@ interface AdminBoardPageProps {
   onUnlock: (passcode: string) => Promise<void>;
   onConnectFirebaseAdmin?: () => Promise<void>;
   onLockAdmin: () => void;
-  onCreateSection: (name: string) => void;
+  onCreateSection: (name: string) => void | Promise<void>;
   onRenameSection: (oldName: string, newName: string) => Promise<void>;
   onDeleteSection: (name: string, removeEpisodes?: boolean) => Promise<void>;
   onUpdateSponsorUrl: (newUrl: string) => Promise<void>;
@@ -339,12 +343,15 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   );
   const [epDuration, setEpDuration] = useState('Watch 30s+');
   const [epReward, setEpReward] = useState('150');
+  const [epStartTime, setEpStartTime] = useState(String(DEFAULT_VIDEO_START_SECONDS));
   const [epSynopsis, setEpSynopsis] = useState('');
   const [epSponsorUrl, setEpSponsorUrl] = useState('');
   const [uploadingThumb, setUploadingThumb] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [savingEp, setSavingEp] = useState(false);
   const [restoringDefaults, setRestoringDefaults] = useState(false);
+  const [deletingEpisodeId, setDeletingEpisodeId] = useState<string | null>(null);
+  const [deletingSectionName, setDeletingSectionName] = useState<string | null>(null);
 
   const [playerSearch, setPlayerSearch] = useState('');
   const [editingCoins, setEditingCoins] = useState<
@@ -506,6 +513,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     setEpLabel(formatEpisodeLabel(nextNum));
     setEpDuration('Watch 30s+');
     setEpReward('150');
+    setEpStartTime(String(DEFAULT_VIDEO_START_SECONDS));
     setEpSynopsis('');
     setEpSponsorUrl('');
   };
@@ -527,6 +535,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     setEpLabel(ep.episodeLabel);
     setEpDuration(ep.duration);
     setEpReward(String(ep.rewardCoins));
+    setEpStartTime(String(normalizeEpisodeStartSeconds(ep.startTime)));
     setEpSynopsis(ep.synopsis);
     setEpSponsorUrl(ep.sponsorUrl || '');
     setStatusMessage(null);
@@ -548,6 +557,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     setEpLabel(matched ? matched.nextEpLabel : 'EP 01');
     setEpDuration('Watch 30s+');
     setEpReward('150');
+    setEpStartTime(String(DEFAULT_VIDEO_START_SECONDS));
     setEpSynopsis('');
     setEpSponsorUrl('');
     setStatusMessage(
@@ -610,19 +620,29 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     }
   };
 
-  const handleCreateSectionSubmit = (e: React.FormEvent) => {
+  const handleCreateSectionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newSectionInput.trim().slice(0, 60);
     if (!trimmed) return;
     setOptimisticSections((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
-    onCreateSection(trimmed);
-    setSeriesSelect(trimmed);
-    setCustomSeriesName('');
-    setEpCategory(inferEpisodeCategory(trimmed));
-    setEpCategoryManual(false);
-    setEpLabel('EP 01');
-    setNewSectionInput('');
-    setStatusMessage(`Section "${trimmed}" created and automatically selected below!`);
+    try {
+      await onCreateSection(trimmed);
+      setSeriesSelect(trimmed);
+      setCustomSeriesName('');
+      setEpCategory(inferEpisodeCategory(trimmed));
+      setEpCategoryManual(false);
+      setEpLabel('EP 01');
+      setNewSectionInput('');
+      showAdminToast(
+        firebaseUserEmail
+          ? `Series "${trimmed}" created & synced to Firebase Firestore!`
+          : `Series "${trimmed}" created locally (connect Google above to sync across devices).`
+      );
+    } catch (err) {
+      setStatusMessage(
+        err instanceof Error ? err.message : `Failed to create "${trimmed}".`
+      );
+    }
   };
 
   const handleConfirmRenameSection = async (oldName: string) => {
@@ -640,14 +660,49 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   };
 
   const handleConfirmDeleteSection = async (name: string) => {
-    await onDeleteSection(name, true);
-    setOptimisticSections((prev) => prev.filter((s) => s !== name));
-    if (seriesSelect === name) {
-      const nextFallback = existingSeriesList.find((s) => s !== name) || NEW_SERIES_OPTION;
-      setSeriesSelect(nextFallback);
+    setDeletingSectionName(name);
+    setStatusMessage(null);
+    try {
+      await onDeleteSection(name, true);
+      setOptimisticSections((prev) => prev.filter((s) => s !== name && toSeriesId(s) !== toSeriesId(name)));
+      if (seriesSelect === name || toSeriesId(seriesSelect) === toSeriesId(name)) {
+        const nextFallback = existingSeriesList.find((s) => s !== name) || NEW_SERIES_OPTION;
+        setSeriesSelect(nextFallback);
+      }
+      setConfirmDeleteSection(null);
+      showAdminToast(
+        firebaseUserEmail
+          ? `Deleted "${name}" & removed from Firebase Firestore.`
+          : `Deleted "${name}" locally (connect Google above to sync across devices).`
+      );
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : `Failed to delete "${name}".`);
+    } finally {
+      setDeletingSectionName(null);
     }
-    setConfirmDeleteSection(null);
-    setStatusMessage(`Deleted section "${name}".`);
+  };
+
+  const handleDeleteEpisodeClick = async (ep: DramaEpisode) => {
+    setDeletingEpisodeId(ep.id);
+    setStatusMessage(null);
+    try {
+      if (editingEpisodeId === ep.id) {
+        resetEpisodeForm();
+      }
+      if (previewPublishedId === ep.id) {
+        setPreviewPublishedId(null);
+      }
+      await onDeleteEpisode(ep.id);
+      showAdminToast(
+        firebaseUserEmail
+          ? `Deleted "${ep.title}" from Firebase Firestore.`
+          : `Deleted "${ep.title}" locally (connect Google above to sync across devices).`
+      );
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : `Failed to delete "${ep.title}".`);
+    } finally {
+      setDeletingEpisodeId(null);
+    }
   };
 
   const handleSaveSponsorUrl = async (e: React.FormEvent) => {
@@ -829,12 +884,35 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       sponsorUrl: epSponsorUrl.trim(),
       youtubeUrl: cleanVideo,
       videoUrl: cleanVideo,
+      startTime: normalizeEpisodeStartSeconds(
+        epStartTime.trim() === '' ? DEFAULT_VIDEO_START_SECONDS : Number(epStartTime)
+      ),
     };
 
     try {
+      const incomingVideoKey = getCanonicalVideoKey(cleanVideo);
+      if (incomingVideoKey) {
+        const duplicateInSeries = episodes.find(
+          (ep) =>
+            ep.id !== editingEpisodeId &&
+            getEpisodeSeriesId(ep) === targetSeriesId &&
+            getCanonicalVideoKey(ep.videoUrl || ep.youtubeUrl) === incomingVideoKey
+        );
+        if (duplicateInSeries) {
+          setStatusMessage(
+            `Duplicate blocked: "${duplicateInSeries.episodeLabel}" ("${duplicateInSeries.title}") already uses this video URL in "${resolvedSeriesName}".`
+          );
+          return;
+        }
+      }
+
       if (editingEpisodeId) {
         await onUpdateEpisode(editingEpisodeId, payload);
-        showAdminToast(`Saved! Updated "${finalTitle}" in "${resolvedSeriesName}".`);
+        showAdminToast(
+          firebaseUserEmail
+            ? `Saved & synced! Updated "${finalTitle}" in "${resolvedSeriesName}".`
+            : `Updated "${finalTitle}" locally (connect Google above to sync across devices).`
+        );
         resetEpisodeForm(resolvedSeriesName);
       } else {
         const existingSeriesEps = episodes.filter(
@@ -853,7 +931,9 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
           sortOrder: currentMaxSort > 0 ? currentMaxSort + 1 : episodes.length + 1,
         });
         showAdminToast(
-          `Saved! Added "${finalEpLabel} — ${finalTitle}" to "${resolvedSeriesName}".`
+          firebaseUserEmail
+            ? `Published & synced! Added "${finalEpLabel}" to "${resolvedSeriesName}".`
+            : `Added "${finalEpLabel}" locally (connect Google above to sync across devices).`
         );
         resetEpisodeForm(resolvedSeriesName, nextNumAfterSave);
       }
@@ -977,6 +1057,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         sponsorUrl: '',
         youtubeUrl: cleanVideo,
         videoUrl: cleanVideo,
+        startTime: DEFAULT_VIDEO_START_SECONDS,
         sortOrder: episodes.length + 1,
       });
 
@@ -1040,6 +1121,21 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       const finalThumb = sanitizeMediaUrl(draft.thumbUrl.trim()) || autoThumb || '';
       const cleanDesc = draft.description.trim() || `${targetSeries} drama series.`;
 
+      const incomingWsVideoKey = getCanonicalVideoKey(cleanVideo);
+      if (incomingWsVideoKey) {
+        const duplicateSibling = row.episodes.find(
+          (ep) =>
+            ep.id !== row.leadEpisode?.id &&
+            getCanonicalVideoKey(ep.videoUrl || ep.youtubeUrl) === incomingWsVideoKey
+        );
+        if (duplicateSibling) {
+          setStatusMessage(
+            `Duplicate blocked: "${duplicateSibling.episodeLabel}" in "${targetSeries}" already uses this video URL.`
+          );
+          return;
+        }
+      }
+
       if (row.leadEpisode) {
         await onUpdateEpisode(row.leadEpisode.id, {
           title: row.leadEpisode.title || `${targetSeries} — EP 01`,
@@ -1055,6 +1151,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
           sponsorUrl: row.leadEpisode.sponsorUrl || '',
           youtubeUrl: cleanVideo,
           videoUrl: cleanVideo,
+          startTime: row.leadEpisode.startTime,
         });
 
         // Keep sibling episodes in the same series aligned with the updated series genre
@@ -1074,6 +1171,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
               sponsorUrl: sibling.sponsorUrl || '',
               youtubeUrl: sibling.youtubeUrl,
               videoUrl: sibling.videoUrl,
+              startTime: sibling.startTime,
             });
           }
         }
@@ -1092,6 +1190,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
           sponsorUrl: '',
           youtubeUrl: cleanVideo,
           videoUrl: cleanVideo,
+          startTime: DEFAULT_VIDEO_START_SECONDS,
           sortOrder: episodes.length + 1,
         });
       }
@@ -1310,7 +1409,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                           setWsCategory(inferEpisodeCategory(val));
                         }
                       }}
-                      placeholder="e.g. The Candy Man"
+                      placeholder="e.g. Midnight Vows"
                       className="w-full min-h-[42px] px-3 rounded-lg bg-[#070709] border border-white/[0.12] text-xs sm:text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                     />
                   </div>
@@ -1544,9 +1643,10 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                               </button>
                               <button
                                 type="button"
+                                disabled={deletingSectionName === row.seriesName}
                                 onClick={() => void handleConfirmDeleteSection(row.seriesName)}
                                 aria-label={`Delete series row ${row.seriesName}`}
-                                className="min-h-[34px] px-2.5 rounded-lg border border-red-500/30 text-red-300 hover:bg-red-950/40 inline-flex items-center cursor-pointer"
+                                className="min-h-[34px] px-2.5 rounded-lg border border-red-500/30 text-red-300 hover:bg-red-950/40 inline-flex items-center cursor-pointer disabled:opacity-50"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -1593,7 +1693,8 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
               <div className="space-y-2">
                 {existingSeriesList.map((sec) => {
-                  const count = episodes.filter((ep) => ep.series === sec).length;
+                  const secId = toSeriesId(sec);
+                  const count = episodes.filter((ep) => getEpisodeSeriesId(ep) === secId).length;
                   const isRenaming = renamingSection === sec;
                   const isConfirmingDelete = confirmDeleteSection === sec;
                   const isSelected = seriesSelect === sec;
@@ -1813,35 +1914,89 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                             setEpCategory(inferEpisodeCategory(val, epTitle));
                           }
                         }}
-                        placeholder="e.g. The Candy Man"
+                        placeholder="e.g. Midnight Vows"
                         className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/40 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                       />
                     </div>
                   ) : selectedCatalogSeries ? (
-                    <div className="rounded-lg bg-[#070709]/85 border border-white/[0.08] px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                      <div className="min-w-0 space-y-0.5">
-                        <p className="text-[#F6F2E9] font-medium truncate">
-                          Adding directly inside{' '}
-                          <span className="text-[#FCE7A2] font-semibold">
-                            {selectedCatalogSeries.seriesName}
-                          </span>{' '}
-                          <span className="text-[10px] font-mono-num text-[#8D867A]">
-                            ({selectedCatalogSeries.seriesId})
+                    <div className="rounded-lg bg-[#070709]/85 border border-white/[0.08] p-3 space-y-3 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0 space-y-0.5">
+                          <p className="text-[#F6F2E9] font-medium truncate">
+                            Selected Series:{' '}
+                            <span className="text-[#FCE7A2] font-semibold">
+                              {selectedCatalogSeries.seriesName}
+                            </span>{' '}
+                            <span className="text-[10px] font-mono-num text-[#8D867A]">
+                              ({selectedCatalogSeries.episodes.length}{' '}
+                              {selectedCatalogSeries.episodes.length === 1 ? 'ep' : 'eps'})
+                            </span>
+                          </p>
+                          <p className="text-[11px] text-[#A69F91]">
+                            {selectedCatalogSeries.episodes.length > 0
+                              ? 'Manage or remove individual episodes below without deleting the whole series.'
+                              : 'No episodes yet — publish Episode 1 below.'}
+                          </p>
+                        </div>
+                        {!editingEpisodeId && (
+                          <span className="px-2.5 py-1 rounded-md bg-[#D4AF37]/15 border border-[#D4AF37]/40 font-mono-num text-[11px] font-bold text-[#FCE7A2] shrink-0">
+                            Next: {selectedCatalogSeries.nextEpLabel}
                           </span>
-                        </p>
-                        <p className="text-[11px] text-[#A69F91] truncate">
-                          {selectedCatalogSeries.episodeCount > 0
-                            ? `Current episodes: ${selectedCatalogSeries.episodes
-                                .map((e) => e.episodeLabel)
-                                .slice(0, 6)
-                                .join(', ')}${selectedCatalogSeries.episodeCount > 6 ? '…' : ''}`
-                            : 'No episodes yet — this will be Episode 1.'}
-                        </p>
+                        )}
                       </div>
-                      {!editingEpisodeId && (
-                        <span className="px-2.5 py-1 rounded-md bg-[#D4AF37]/15 border border-[#D4AF37]/40 font-mono-num text-[11px] font-bold text-[#FCE7A2] shrink-0">
-                          Next: {selectedCatalogSeries.nextEpLabel}
-                        </span>
+
+                      {selectedCatalogSeries.episodes.length > 0 && (
+                        <div className="max-h-60 overflow-y-auto divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#0B0B10]">
+                          {selectedCatalogSeries.episodes.map((ep) => {
+                            const thumb = resolveEpisodeCover(ep);
+                            const rawVid = (ep.videoUrl || ep.youtubeUrl || '').trim();
+                            const isDeletingThis = deletingEpisodeId === ep.id;
+                            return (
+                              <div
+                                key={ep.id}
+                                className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 hover:bg-white/[0.02]"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                  <div className="w-12 h-8 rounded overflow-hidden border border-white/10 shrink-0 bg-[#070709]">
+                                    <ResolvedThumb src={thumb} alt={ep.title} />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold text-[#F6F2E9] truncate">
+                                      <span className="font-mono-num text-[#FCE7A2] mr-1.5">
+                                        {ep.episodeLabel}
+                                      </span>
+                                      {ep.title}
+                                    </p>
+                                    <p className="text-[10px] font-mono-num text-[#8D867A] truncate">
+                                      {rawVid || 'No video URL'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartEditEpisode(ep)}
+                                    className="min-h-[32px] px-2.5 rounded-lg border border-[#D4AF37]/30 text-[#E8C96D] hover:bg-[#D4AF37]/10 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                    <span>Edit</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isDeletingThis}
+                                    onClick={() => void handleDeleteEpisodeClick(ep)}
+                                    aria-label={`Delete episode ${ep.episodeLabel} ${ep.title}`}
+                                    className="min-h-[32px] px-2.5 rounded-lg bg-red-600/20 border border-red-500/50 text-red-200 hover:bg-red-600 hover:text-white text-[11px] font-bold inline-flex items-center gap-1 transition-colors disabled:opacity-50 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    <span>{isDeletingThis ? 'Deleting...' : 'Delete'}</span>
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
                   ) : null}
@@ -1978,17 +2133,34 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[11px] text-[#A69F91]">
-                    Optional Sponsor URL override
-                  </label>
-                  <input
-                    type="text"
-                    value={epSponsorUrl}
-                    onChange={(e) => setEpSponsorUrl(e.target.value)}
-                    placeholder="Leave blank to use global Sponsor Ad URL"
-                    className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-white/[0.1] text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label htmlFor="ep-start-time" className="text-[11px] text-[#A69F91]">
+                      Start At (seconds)
+                    </label>
+                    <input
+                      id="ep-start-time"
+                      type="number"
+                      min={0}
+                      max={86400}
+                      value={epStartTime}
+                      onChange={(e) => setEpStartTime(e.target.value)}
+                      placeholder="28"
+                      className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-white/[0.1] text-sm font-mono-num text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-[#A69F91]">
+                      Optional Sponsor URL override
+                    </label>
+                    <input
+                      type="text"
+                      value={epSponsorUrl}
+                      onChange={(e) => setEpSponsorUrl(e.target.value)}
+                      placeholder="Leave blank to use global Sponsor Ad URL"
+                      className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-white/[0.1] text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                    />
+                  </div>
                 </div>
 
                 <div className="sm:col-span-2 space-y-1">
@@ -2099,12 +2271,13 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => void onDeleteEpisode(ep.id)}
+                            disabled={deletingEpisodeId === ep.id}
+                            onClick={() => void handleDeleteEpisodeClick(ep)}
                             aria-label={`Delete ${ep.title}`}
-                            className="min-h-[38px] px-3 rounded-lg border border-red-500/25 text-red-300 hover:bg-red-950/40 text-xs font-medium inline-flex items-center gap-1.5 transition-colors"
+                            className="min-h-[38px] px-3 rounded-lg border border-red-500/25 text-red-300 hover:bg-red-950/40 text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete</span>
+                            <span>{deletingEpisodeId === ep.id ? 'Deleting...' : 'Delete'}</span>
                           </button>
                         </div>
                       </div>
@@ -2140,7 +2313,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     required
                     value={sponsorUrlInput}
                     onChange={(e) => setSponsorUrlInput(e.target.value)}
-                    placeholder="https://asiafilm.org"
+                    placeholder="https://directyp.org"
                     className="flex-1 min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/25 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                   />
                   <button

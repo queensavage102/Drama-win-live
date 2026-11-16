@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CalendarCheck2, Check, Coins, Crown } from 'lucide-react';
 import {
+  DEFAULT_SPONSOR_URL,
   STREAK_DAYS,
   getCurrentWeekKey,
   getTodayWeekdayKey,
@@ -9,11 +10,13 @@ import { PlayerPrivate, WeekDayKey } from '../types';
 
 interface DailyCheckInBoxProps {
   privateState: PlayerPrivate;
+  sponsorAdUrl?: string;
   onCompleteCheckIn: (dayKey: WeekDayKey, rewardCoins: number) => Promise<void>;
 }
 
 export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
   privateState,
+  sponsorAdUrl,
   onCompleteCheckIn,
 }) => {
   const todayWeekday = getTodayWeekdayKey();
@@ -27,6 +30,7 @@ export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
     if (claimedDays.includes(day.key) || day.key !== todayWeekday || collecting) {
       return;
     }
+    window.open(DEFAULT_SPONSOR_URL, '_blank');
     setCollecting(true);
     try {
       await onCompleteCheckIn(day.key, day.reward);
@@ -50,7 +54,7 @@ export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
             </h2>
           </div>
           <p className="text-xs text-[#A69F91]">
-            Tap <strong className="text-[#FCE7A2]">Check In</strong> on today’s card to collect 100–300 bonus coins.
+            Tap <strong className="text-[#FCE7A2]">Claim</strong> on today’s card to visit sponsor &amp; collect 100–300 bonus coins.
           </p>
         </div>
 
@@ -128,7 +132,7 @@ export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
                     onClick={() => void handleCheckIn(day)}
                     className="w-full min-h-[38px] px-2.5 rounded-lg gold-gradient-bg text-[#181307] text-xs font-extrabold tracking-wide hover:brightness-105 active:scale-[0.97] transition-all shadow-md shadow-[#D4AF37]/25 cursor-pointer disabled:opacity-60"
                   >
-                    {collecting ? 'Checking In...' : 'Check In'}
+                    {collecting ? 'Claiming...' : 'Claim'}
                   </button>
                 ) : (
                   <div className="min-h-[34px] rounded-lg bg-[#14141B] border border-white/[0.06] text-[#7A746A] text-[11px] font-medium flex items-center justify-center">

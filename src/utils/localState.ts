@@ -9,6 +9,7 @@ import {
   MYSTERY_ENTRY_COST,
   SAST_OFFSET_MS,
   SEEDED_TOURNAMENT_PLAYERS,
+  deduplicateEpisodeList,
   getCurrentWeekKey,
   getEpisodeSeriesId,
   getMondayStartTimestampSAST,
@@ -16,6 +17,8 @@ import {
   getYouTubeThumbnailUrl,
   inferEpisodeCategory,
   isLegacyBrokenEpisode,
+  isLegacyOrBareSponsorUrl,
+  normalizeEpisodeStartSeconds,
   sanitizeExternalUrl,
   sanitizeMediaUrl,
   toSeriesId,
@@ -40,6 +43,7 @@ const LOCAL_EPISODES_KEY = 'dramawin_episodes';
 const LOCAL_SECTIONS_KEY = 'dramawin_sections_v1';
 const LOCAL_CONFIG_KEY = 'dramawin_app_config_v1';
 const LOCAL_WINNERS_KEY = 'dramawin_mystery_winners_v1';
+const LOCAL_DELETED_IDS_KEY = 'dramawin_deleted_ids_v1';
 
 export const DEFAULT_LOCAL_APP_CONFIG: AppConfig = {
   sponsorAdUrl: DEFAULT_SPONSOR_URL,
@@ -141,15 +145,18 @@ export function getOrCreateGuestSession(): {
   return { player, privateProfile };
 }
 
-export function loadLocalLeaderboard(currentPlayer: LeaderboardPlayer): LeaderboardPlayer[] {
-  const list = safeReadJson<LeaderboardPlayer[]>(GUEST_LEADERBOARD_KEY, []);
+export function mergeLeaderboardWithSeedPlayers(
+  basePlayers: LeaderboardPlayer[],
+  currentPlayer?: LeaderboardPlayer
+): LeaderboardPlayer[] {
   const map = new Map<string, LeaderboardPlayer>();
 
-  // Always seed active tournament players unless already overridden in local storage
+  // Populate the 15 realistic active tournament players
   SEEDED_TOURNAMENT_PLAYERS.forEach((seed) => {
     map.set(seed.uid, {
       uid: seed.uid,
       username: seed.username,
+      avatar: seed.avatar,
       coins: seed.coins,
       weeklyCoins: seed.weeklyCoins,
       qualified: seed.weeklyCoins >= DEFAULT_QUALIFICATION_THRESHOLD,
@@ -159,22 +166,34 @@ export function loadLocalLeaderboard(currentPlayer: LeaderboardPlayer): Leaderbo
     });
   });
 
-  list.forEach((p) => {
-    if (p?.uid) {
-      map.set(p.uid, {
-        ...p,
-        qualified: (p.weeklyCoins || 0) >= DEFAULT_QUALIFICATION_THRESHOLD,
-      });
-    }
-  });
-  map.set(currentPlayer.uid, {
-    ...currentPlayer,
-    qualified: (currentPlayer.weeklyCoins || 0) >= DEFAULT_QUALIFICATION_THRESHOLD,
+  // Merge non-seed live/saved players (preserving real user scores)
+  basePlayers.forEach((p) => {
+    if (!p?.uid || p.uid.startsWith('seed-')) return;
+    map.set(p.uid, {
+      ...p,
+      avatar: p.avatar || p.username.slice(0, 2).toUpperCase(),
+      qualified: (p.weeklyCoins || 0) >= DEFAULT_QUALIFICATION_THRESHOLD,
+    });
   });
 
-  const sorted = Array.from(map.values()).sort(
-    (a, b) => (b.weeklyCoins || 0) - (a.weeklyCoins || 0)
-  );
+  if (currentPlayer?.uid) {
+    map.set(currentPlayer.uid, {
+      ...currentPlayer,
+      avatar: currentPlayer.avatar || currentPlayer.username.slice(0, 2).toUpperCase(),
+      qualified: (currentPlayer.weeklyCoins || 0) >= DEFAULT_QUALIFICATION_THRESHOLD,
+    });
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const weeklyDiff = (b.weeklyCoins || 0) - (a.weeklyCoins || 0);
+    if (weeklyDiff !== 0) return weeklyDiff;
+    return (b.coins || 0) - (a.coins || 0);
+  });
+}
+
+export function loadLocalLeaderboard(currentPlayer: LeaderboardPlayer): LeaderboardPlayer[] {
+  const list = safeReadJson<LeaderboardPlayer[]>(GUEST_LEADERBOARD_KEY, []);
+  const sorted = mergeLeaderboardWithSeedPlayers(list, currentPlayer);
   safeWriteJson(GUEST_LEADERBOARD_KEY, sorted);
   return sorted;
 }
@@ -213,27 +232,7 @@ export function resetLocalPlayerCoins(player: LeaderboardPlayer): {
 
 export function upsertLocalLeaderboardPlayer(player: LeaderboardPlayer): LeaderboardPlayer[] {
   const list = safeReadJson<LeaderboardPlayer[]>(GUEST_LEADERBOARD_KEY, []);
-  const map = new Map<string, LeaderboardPlayer>();
-  SEEDED_TOURNAMENT_PLAYERS.forEach((seed) => {
-    map.set(seed.uid, {
-      uid: seed.uid,
-      username: seed.username,
-      coins: seed.coins,
-      weeklyCoins: seed.weeklyCoins,
-      qualified: seed.weeklyCoins >= DEFAULT_QUALIFICATION_THRESHOLD,
-      streakCount: seed.streakCount,
-      sundayBonusZar: 0,
-      isPublic: true,
-    });
-  });
-  list.forEach((p) => {
-    if (p?.uid) map.set(p.uid, p);
-  });
-  map.set(player.uid, player);
-
-  const sorted = Array.from(map.values()).sort(
-    (a, b) => (b.weeklyCoins || 0) - (a.weeklyCoins || 0)
-  );
+  const sorted = mergeLeaderboardWithSeedPlayers(list, player);
   safeWriteJson(GUEST_LEADERBOARD_KEY, sorted);
   return sorted;
 }
@@ -251,8 +250,9 @@ export function loadLocalAppConfig(): AppConfig {
     ...DEFAULT_LOCAL_APP_CONFIG,
     ...(saved || {}),
   };
-  if (!merged.sponsorAdUrl || !merged.sponsorAdUrl.trim()) {
+  if (isLegacyOrBareSponsorUrl(merged.sponsorAdUrl)) {
     merged.sponsorAdUrl = DEFAULT_SPONSOR_URL;
+    safeWriteJson(LOCAL_CONFIG_KEY, merged);
   }
   // Migrate legacy 500 coin threshold caches up to 500,000 coins
   if (!merged.qualificationThreshold || merged.qualificationThreshold < DEFAULT_QUALIFICATION_THRESHOLD) {
@@ -271,23 +271,71 @@ export function loadLocalMysteryWinners(): MysteryWinnerRecord[] {
   return safeReadJson<MysteryWinnerRecord[]>(LOCAL_WINNERS_KEY, []);
 }
 
+export function loadDeletedIds(): string[] {
+  const raw = safeReadJson<unknown>(LOCAL_DELETED_IDS_KEY, []);
+  if (!Array.isArray(raw)) return [];
+  return Array.from(
+    new Set(raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0))
+  );
+}
+
+export function recordDeletedIds(ids: string[]): string[] {
+  const cleanNew = ids.map((id) => id.trim()).filter(Boolean);
+  const current = loadDeletedIds();
+  const next = Array.from(new Set([...current, ...cleanNew]));
+  safeWriteJson(LOCAL_DELETED_IDS_KEY, next);
+  return next;
+}
+
+export function removeDeletedSeriesMarker(seriesNameOrId: string): string[] {
+  const targetId = seriesNameOrId.startsWith('series-')
+    ? seriesNameOrId
+    : toSeriesId(seriesNameOrId);
+  const next = loadDeletedIds().filter((id) => id !== targetId);
+  safeWriteJson(LOCAL_DELETED_IDS_KEY, next);
+  return next;
+}
+
+export function isEpisodeDeleted(
+  ep: Partial<DramaEpisode>,
+  deletedSet = new Set(loadDeletedIds())
+): boolean {
+  if (ep.id && deletedSet.has(ep.id)) return true;
+  const sId = getEpisodeSeriesId(ep);
+  if (sId && deletedSet.has(sId)) return true;
+  return false;
+}
+
 export function loadLocalSections(episodes: DramaEpisode[]): string[] {
   const saved = safeReadJson<string[]>(LOCAL_SECTIONS_KEY, []);
+  const deletedSet = new Set(loadDeletedIds());
   const activeEpisodeSeries = new Set(
     episodes
-      .filter((ep) => !isLegacyBrokenEpisode(ep))
-      .map((ep) => ep.series?.trim())
+      .filter((ep) => !isLegacyBrokenEpisode(ep) && !isEpisodeDeleted(ep, deletedSet))
+      .map((ep) => ep.series?.trim().replace(/\s+/g, ' '))
       .filter((s): s is string => Boolean(s))
   );
-  const set = new Set<string>();
+  const canonicalMap = new Map<string, string>();
   saved.forEach((s) => {
-    const clean = typeof s === 'string' ? s.trim() : '';
+    const clean = typeof s === 'string' ? s.trim().replace(/\s+/g, ' ') : '';
     if (!clean || clean === 'Rang Ngao (แรงเงา) [ENG SUB]') return;
+    if (/gojo|jujutsu|jjk|candy\s*man/i.test(clean)) return;
     if (LEGACY_BROKEN_SERIES_NAMES.includes(clean) && !activeEpisodeSeries.has(clean)) return;
-    set.add(clean);
+    const sId = toSeriesId(clean);
+    if (deletedSet.has(sId) && !activeEpisodeSeries.has(clean)) return;
+    if (!canonicalMap.has(sId)) {
+      canonicalMap.set(sId, clean);
+    }
   });
-  activeEpisodeSeries.forEach((clean) => set.add(clean));
-  const result = Array.from(set);
+  activeEpisodeSeries.forEach((clean) => {
+    if (/gojo|jujutsu|jjk|candy\s*man/i.test(clean)) return;
+    const sId = toSeriesId(clean);
+    if (deletedSet.has(sId)) return;
+    if (!canonicalMap.has(sId)) {
+      canonicalMap.set(sId, clean);
+    }
+  });
+  const result = Array.from(canonicalMap.values());
   safeWriteJson(LOCAL_SECTIONS_KEY, result);
   return result;
 }
@@ -295,6 +343,7 @@ export function loadLocalSections(episodes: DramaEpisode[]): string[] {
 export function saveLocalSection(sectionName: string): string[] {
   const trimmed = sectionName.trim().slice(0, 60);
   if (!trimmed) return safeReadJson<string[]>(LOCAL_SECTIONS_KEY, []);
+  removeDeletedSeriesMarker(trimmed);
   const existing = safeReadJson<string[]>(LOCAL_SECTIONS_KEY, []);
   if (!existing.includes(trimmed)) {
     const next = [...existing, trimmed];
@@ -315,6 +364,7 @@ export function renameLocalSection(
     return { sections: loadLocalSections(currentEpisodes), episodes: currentEpisodes };
   }
 
+  removeDeletedSeriesMarker(cleanNew);
   const existingSections = loadLocalSections(currentEpisodes);
   const mappedSections = Array.from(
     new Set(existingSections.map((s) => (s === cleanOld ? cleanNew : s)))
@@ -334,36 +384,43 @@ export function renameLocalSection(
 export function deleteLocalSection(
   sectionName: string,
   removeEpisodes = true
-): { sections: string[]; episodes: DramaEpisode[] } {
+): { sections: string[]; episodes: DramaEpisode[]; deletedIds: string[] } {
+  const targetSeriesId = toSeriesId(sectionName);
   const currentEpisodes = loadLocalEpisodes();
+  const removedEpisodes = currentEpisodes.filter(
+    (ep) => ep.series === sectionName || getEpisodeSeriesId(ep) === targetSeriesId
+  );
+  const deletedIds = recordDeletedIds([
+    targetSeriesId,
+    ...(removeEpisodes ? removedEpisodes.map((ep) => ep.id) : []),
+  ]);
+
   const nextEpisodes = removeEpisodes
-    ? currentEpisodes.filter((ep) => ep.series !== sectionName)
+    ? currentEpisodes.filter(
+        (ep) => ep.series !== sectionName && getEpisodeSeriesId(ep) !== targetSeriesId
+      )
     : currentEpisodes;
   safeWriteJson(LOCAL_EPISODES_KEY, nextEpisodes);
 
-  const existing = loadLocalSections(currentEpisodes);
-  const nextSections = existing.filter((s) => s !== sectionName);
+  const existing = loadLocalSections(nextEpisodes);
+  const nextSections = existing.filter(
+    (s) => s !== sectionName && toSeriesId(s) !== targetSeriesId
+  );
   safeWriteJson(LOCAL_SECTIONS_KEY, nextSections);
-  return { sections: nextSections, episodes: nextEpisodes };
+  return { sections: nextSections, episodes: nextEpisodes, deletedIds };
 }
 
 export function loadLocalEpisodes(): DramaEpisode[] {
+  const deletedSet = new Set(loadDeletedIds());
   if (typeof window !== 'undefined' && window.localStorage) {
     const rawStr = window.localStorage.getItem(LOCAL_EPISODES_KEY);
     if (rawStr !== null) {
       try {
         const parsed = JSON.parse(rawStr) as unknown;
         if (Array.isArray(parsed)) {
-          const cleaned = (parsed as DramaEpisode[])
-            .filter((ep) => !isLegacyBrokenEpisode(ep))
-            .map((ep) => ({
-              ...ep,
-              seriesId: getEpisodeSeriesId(ep),
-              category: inferEpisodeCategory(ep.series, ep.title, ep.category),
-              coverImage: ep.coverImage === 'none' ? '' : ep.coverImage,
-              thumbnailUrl: ep.thumbnailUrl === 'none' ? '' : ep.thumbnailUrl,
-            }))
-            .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+          const cleaned = deduplicateEpisodeList(parsed as DramaEpisode[]).filter(
+            (ep) => !isEpisodeDeleted(ep, deletedSet)
+          );
           if (cleaned.length !== parsed.length) {
             safeWriteJson(LOCAL_EPISODES_KEY, cleaned);
           }
@@ -379,9 +436,12 @@ export function loadLocalEpisodes(): DramaEpisode[] {
 }
 
 export function saveLocalEpisodes(episodes: DramaEpisode[]): DramaEpisode[] {
-  const sorted = [...episodes].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-  safeWriteJson(LOCAL_EPISODES_KEY, sorted);
-  return sorted;
+  const deletedSet = new Set(loadDeletedIds());
+  const deduped = deduplicateEpisodeList(episodes).filter(
+    (ep) => !isEpisodeDeleted(ep, deletedSet)
+  );
+  safeWriteJson(LOCAL_EPISODES_KEY, deduped);
+  return deduped;
 }
 
 export function reorderLocalSeries(orderedSeriesNames: string[]): {
@@ -442,6 +502,7 @@ export function addLocalEpisode(input: {
   sponsorUrl: string;
   youtubeUrl?: string;
   videoUrl?: string;
+  startTime?: number;
   sortOrder: number;
 }): DramaEpisode[] {
   const current = loadLocalEpisodes();
@@ -473,6 +534,7 @@ export function addLocalEpisode(input: {
     sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
     youtubeUrl: cleanVideo,
     videoUrl: cleanVideo,
+    startTime: normalizeEpisodeStartSeconds(input.startTime),
     sortOrder: Math.max(0, Math.round(input.sortOrder || current.length + 1)),
     isPublic: true,
   };
@@ -497,6 +559,7 @@ export function updateLocalEpisode(
     sponsorUrl: string;
     youtubeUrl?: string;
     videoUrl?: string;
+    startTime?: number;
   }
 ): DramaEpisode[] {
   const current = loadLocalEpisodes();
@@ -529,6 +592,7 @@ export function updateLocalEpisode(
       sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
       youtubeUrl: cleanVideo,
       videoUrl: cleanVideo,
+      startTime: normalizeEpisodeStartSeconds(input.startTime ?? ep.startTime),
     };
   });
 
@@ -537,6 +601,7 @@ export function updateLocalEpisode(
 }
 
 export function deleteLocalEpisode(episodeId: string): DramaEpisode[] {
+  recordDeletedIds([episodeId]);
   const current = loadLocalEpisodes();
   const next = current.filter((ep) => ep.id !== episodeId);
   safeWriteJson(LOCAL_EPISODES_KEY, next);
@@ -783,4 +848,20 @@ export function getLast7DaysDateKeysSAST(now = new Date()): {
     });
   }
   return result;
+}
+
+const MY_LIST_STORAGE_KEY = 'dramawin_my_list_v1';
+
+export function loadMyListSeriesIds(): string[] {
+  const raw = safeReadJson<unknown>(MY_LIST_STORAGE_KEY, []);
+  if (!Array.isArray(raw)) return [];
+  return Array.from(new Set(raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)));
+}
+
+export function toggleMyListSeriesId(seriesId: string): { list: string[]; added: boolean } {
+  const current = loadMyListSeriesIds();
+  const exists = current.includes(seriesId);
+  const next = exists ? current.filter((id) => id !== seriesId) : [seriesId, ...current];
+  safeWriteJson(MY_LIST_STORAGE_KEY, next);
+  return { list: next, added: !exists };
 }

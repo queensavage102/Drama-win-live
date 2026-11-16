@@ -130,6 +130,40 @@
         "updatedAt"
       ]
     },
+    "Series": {
+      "title": "Series",
+      "description": "Drama series folder metadata and ordered episode ID references.",
+      "type": "object",
+      "properties": {
+        "seriesId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "coverImage": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "synopsis": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "episodeIds": { "type": "array" },
+        "sortOrder": { "type": "number" },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "seriesId",
+        "title",
+        "category",
+        "coverImage",
+        "synopsis",
+        "episodeIds",
+        "sortOrder",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
     "Episode": {
       "title": "Episode",
       "description": "Featured short-drama episode catalog item.",
@@ -146,6 +180,7 @@
         "synopsis": { "type": "string", "minLength": 1, "maxLength": 240 },
         "sponsorUrl": { "type": "string", "maxLength": 500 },
         "youtubeUrl": { "type": "string", "maxLength": 500 },
+        "startTime": { "type": "number", "description": "Start time offset in seconds (defaults to 28)." },
         "sortOrder": { "type": "number" },
         "isPublic": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -280,6 +315,10 @@
     "/playerPrivate/{playerId}/transactions/{transactionId}": {
       "schema": { "$ref": "#/entities/CoinTransaction" },
       "description": "Private chronological coin earnings and expenditure log for a player."
+    },
+    "/series/{seriesId}": {
+      "schema": { "$ref": "#/entities/Series" },
+      "description": "Drama series folders and ordered episode ID references managed via Admin Studio."
     },
     "/episodes/{episodeId}": {
       "schema": { "$ref": "#/entities/Episode" },

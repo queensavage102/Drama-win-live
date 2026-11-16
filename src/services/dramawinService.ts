@@ -1,4 +1,6 @@
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -21,10 +23,13 @@ import {
   DEFAULT_POOL_TARGET_COINS,
   DEFAULT_QUALIFICATION_THRESHOLD,
   DEFAULT_SPONSOR_URL,
+  DEFAULT_VIDEO_START_SECONDS,
   ADMIN_PASSCODE,
   LEGACY_PLACEHOLDER_EPISODE_IDS,
   MYSTERY_ENTRY_COST,
+  deduplicateEpisodeList,
   forceSaveDefaultEpisodesToLocalStorage,
+  getCanonicalVideoKey,
   getCurrentWeekKey,
   getEpisodeSeriesId,
   getMondayStartTimestampSAST,
@@ -32,13 +37,16 @@ import {
   getYouTubeThumbnailUrl,
   inferEpisodeCategory,
   isLegacyBrokenEpisode,
+  normalizeEpisodeStartSeconds,
   sanitizeExternalUrl,
+  toSeriesId,
 } from '../constants';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import {
   AppConfig,
   CoinTransaction,
   DramaEpisode,
+  DramaSeries,
   LeaderboardPlayer,
   MysteryWinnerRecord,
   PlayerPrivate,
@@ -233,6 +241,38 @@ export function subscribeAppConfig(
   );
 }
 
+export function subscribeSeries(
+  onData: (seriesList: DramaSeries[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const path = 'series';
+  const q = query(collection(db, 'series'), where('isPublic', '==', true));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs
+        .map((d) => {
+          const data = d.data() as Omit<DramaSeries, 'id'>;
+          return {
+            id: d.id,
+            ...data,
+            seriesId: data.seriesId || d.id,
+          };
+        })
+        .filter((s) => !/gojo|jujutsu|jjk|candy\s*man/i.test(`${s.seriesId} ${s.title}`))
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        if (onError && wrapped instanceof Error) onError(wrapped);
+      }
+    }
+  );
+}
+
 export function subscribeEpisodes(
   onData: (episodes: DramaEpisode[]) => void,
   onError?: (err: Error) => void
@@ -242,8 +282,8 @@ export function subscribeEpisodes(
   return onSnapshot(
     q,
     (snapshot) => {
-      const items = snapshot.docs
-        .map((d) => {
+      const items = deduplicateEpisodeList(
+        snapshot.docs.map((d) => {
           const data = d.data() as Omit<DramaEpisode, 'id'>;
           return {
             id: d.id,
@@ -253,7 +293,7 @@ export function subscribeEpisodes(
             coverImage: data.coverImage === 'none' ? '' : data.coverImage,
           };
         })
-        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+      );
       onData(items);
     },
     (error) => {
@@ -632,7 +672,7 @@ export async function awardWatchPotCoins(
   episodeId?: string
 ): Promise<void> {
   const todayKey = getTodayDateKey();
-  const safeReward = Math.max(100, Math.min(300, Math.round(rewardCoins || 100)));
+  const safeReward = Math.max(100, Math.min(600, Math.round(rewardCoins || 300)));
   const nextWatched = episodeId
     ? mergeWatchedEpisodeId(privateState.watchedEpisodeIds || [], episodeId)
     : undefined;
@@ -682,6 +722,31 @@ export async function claimBannerAd(
     }
   );
   return true;
+}
+
+export async function awardHeroBonusCoins(
+  player: LeaderboardPlayer,
+  privateState: PlayerPrivate,
+  rewardCoins: number,
+  qualificationThreshold: number
+): Promise<void> {
+  const todayKey = getTodayDateKey();
+  const safeReward = Math.max(25, Math.min(500, Math.round(rewardCoins || 100)));
+  await awardPlayerCoins(
+    player,
+    privateState,
+    safeReward,
+    qualificationThreshold,
+    {
+      lastActivityDate: todayKey,
+    },
+    undefined,
+    safeReward,
+    {
+      category: 'banner',
+      title: 'Hero Carousel Bonus Claim',
+    }
+  );
 }
 
 export async function awardMysteryBoxCoins(
@@ -902,6 +967,7 @@ function buildFirestoreEpisodeFields(ep: Omit<DramaEpisode, 'id' | 'createdAt' |
     synopsis: (ep.synopsis.trim() || 'Featured drama series.').slice(0, 240),
     sponsorUrl: ep.sponsorUrl ? ep.sponsorUrl.slice(0, 500) : '',
     youtubeUrl: (ep.youtubeUrl || '').slice(0, 500),
+    startTime: normalizeEpisodeStartSeconds(ep.startTime ?? DEFAULT_VIDEO_START_SECONDS),
     sortOrder: Math.max(0, Math.min(10000, Math.round(ep.sortOrder || 1))),
     isPublic: true,
   };
@@ -912,15 +978,71 @@ export async function purgeLegacyAndStrayEpisodesFromFirestore(): Promise<number
     const snap = await getDocs(
       query(collection(db, 'episodes'), where('isPublic', '==', true))
     );
-    const toDelete = snap.docs.filter((d) => {
+    const docsSorted = [...snap.docs].sort(
+      (a, b) => ((a.data()?.sortOrder as number) || 0) - ((b.data()?.sortOrder as number) || 0)
+    );
+
+    const toDeleteIds = new Set<string>();
+    const toDeleteRefs: typeof snap.docs = [];
+    const seenSeriesVideo = new Set<string>();
+
+    for (const d of docsSorted) {
       const ep = { id: d.id, ...(d.data() as Omit<DramaEpisode, 'id'>) };
-      return isLegacyBrokenEpisode(ep);
+      if (isLegacyBrokenEpisode(ep)) {
+        toDeleteIds.add(d.id);
+        toDeleteRefs.push(d);
+        continue;
+      }
+      const sId = getEpisodeSeriesId(ep);
+      const videoKey = getCanonicalVideoKey(ep.videoUrl || ep.youtubeUrl);
+      if (videoKey) {
+        const sig = `${sId}::${videoKey}`;
+        if (seenSeriesVideo.has(sig)) {
+          toDeleteIds.add(d.id);
+          toDeleteRefs.push(d);
+          continue;
+        }
+        seenSeriesVideo.add(sig);
+      }
+    }
+
+    const seriesSnap = await getDocs(
+      query(collection(db, 'series'), where('isPublic', '==', true))
+    );
+    const straySeries = seriesSnap.docs.filter((d) => {
+      const s = d.data() as Partial<DramaSeries>;
+      return /gojo|jujutsu|jjk|candy\s*man/i.test(`${d.id} ${s.title || ''}`);
     });
-    if (toDelete.length === 0) return 0;
+    const straySeriesIds = new Set(straySeries.map((d) => d.id));
+
+    const seriesUpdates: Array<{ ref: (typeof seriesSnap.docs)[number]['ref']; removedIds: string[] }> = [];
+    if (toDeleteIds.size > 0) {
+      for (const sDoc of seriesSnap.docs) {
+        if (straySeriesIds.has(sDoc.id)) continue;
+        const data = sDoc.data() as Partial<DramaSeries>;
+        const epIds = Array.isArray(data.episodeIds) ? data.episodeIds : [];
+        const removedIds = epIds.filter((id) => toDeleteIds.has(id));
+        if (removedIds.length > 0) {
+          seriesUpdates.push({ ref: sDoc.ref, removedIds });
+        }
+      }
+    }
+
+    if (toDeleteRefs.length === 0 && straySeries.length === 0 && seriesUpdates.length === 0) {
+      return 0;
+    }
+
     const batch = writeBatch(db);
-    toDelete.forEach((d) => batch.delete(d.ref));
+    toDeleteRefs.forEach((d) => batch.delete(d.ref));
+    straySeries.forEach((d) => batch.delete(d.ref));
+    seriesUpdates.forEach(({ ref, removedIds }) => {
+      batch.update(ref, {
+        episodeIds: arrayRemove(...removedIds),
+        updatedAt: serverTimestamp(),
+      });
+    });
     await batch.commit();
-    return toDelete.length;
+    return toDeleteRefs.length + straySeries.length;
   } catch {
     return 0;
   }
@@ -1003,6 +1125,14 @@ export async function restoreDefaultEpisodes(): Promise<void> {
       }
       hasWrites = true;
     }
+
+    const currentSeries = await getDocs(
+      query(collection(db, 'series'), where('isPublic', '==', true))
+    );
+    currentSeries.docs.forEach((d) => {
+      batch.delete(d.ref);
+      hasWrites = true;
+    });
 
     if (hasWrites) {
       await batch.commit();
@@ -1285,6 +1415,94 @@ export async function evaluateSundayPoolRollover(
   };
 }
 
+export async function upsertDramaSeries(input: {
+  title: string;
+  seriesId?: string;
+  category?: string;
+  coverImage?: string;
+  synopsis?: string;
+  episodeIdToAdd?: string;
+  sortOrder?: number;
+}): Promise<void> {
+  const cleanTitle = (input.title.trim() || 'Featured Series').slice(0, 60);
+  const seriesId = (input.seriesId?.trim() || toSeriesId(cleanTitle)).slice(0, 80);
+  const path = `series/${seriesId}`;
+  const category = inferEpisodeCategory(cleanTitle, undefined, input.category).slice(0, 32);
+  const coverImage = (input.coverImage?.trim() || 'none').slice(0, 500);
+  const synopsis = (input.synopsis?.trim() || `${cleanTitle} drama series.`).slice(0, 240);
+
+  try {
+    const docRef = doc(db, 'series', seriesId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      await setDoc(docRef, {
+        seriesId,
+        title: cleanTitle,
+        category,
+        coverImage,
+        synopsis,
+        episodeIds: input.episodeIdToAdd ? [input.episodeIdToAdd] : [],
+        sortOrder: Math.max(0, Math.min(10000, Math.round(input.sortOrder ?? 1))),
+        isPublic: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      const existingData = snap.data() as Partial<DramaSeries>;
+      const updates: Record<string, unknown> = {
+        title: cleanTitle,
+        category,
+        updatedAt: serverTimestamp(),
+      };
+      if (coverImage !== 'none' && (!existingData.coverImage || existingData.coverImage === 'none')) {
+        updates.coverImage = coverImage;
+      }
+      if (input.episodeIdToAdd) {
+        updates.episodeIds = arrayUnion(input.episodeIdToAdd);
+      }
+      await updateDoc(docRef, updates);
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteDramaSeriesFromFirestore(
+  seriesNameOrId: string,
+  episodeIds: string[] = []
+): Promise<void> {
+  const seriesId = seriesNameOrId.startsWith('series-')
+    ? seriesNameOrId
+    : toSeriesId(seriesNameOrId);
+  try {
+    const idsToDelete = new Set(episodeIds.filter(Boolean));
+    const epSnap = await getDocs(
+      query(collection(db, 'episodes'), where('isPublic', '==', true))
+    );
+    epSnap.docs.forEach((d) => {
+      const data = d.data() as Partial<DramaEpisode>;
+      if (getEpisodeSeriesId(data) === seriesId) {
+        idsToDelete.add(d.id);
+      }
+    });
+
+    for (const epId of idsToDelete) {
+      const epRef = doc(db, 'episodes', epId);
+      const epSnapDoc = await getDoc(epRef);
+      if (epSnapDoc.exists()) {
+        await deleteDoc(epRef);
+      }
+    }
+    const seriesRef = doc(db, 'series', seriesId);
+    const seriesSnap = await getDoc(seriesRef);
+    if (seriesSnap.exists()) {
+      await deleteDoc(seriesRef);
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `series/${seriesId}`);
+  }
+}
+
 export async function addDramaEpisode(input: {
   id?: string;
   title: string;
@@ -1300,6 +1518,7 @@ export async function addDramaEpisode(input: {
   sponsorUrl: string;
   youtubeUrl?: string;
   videoUrl?: string;
+  startTime?: number;
   sortOrder: number;
 }): Promise<void> {
   const id = input.id?.trim() || `ep-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1327,6 +1546,8 @@ export async function addDramaEpisode(input: {
   const cleanSeries = (input.series.trim() || 'Featured Series').slice(0, 60);
   const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: input.seriesId }).slice(0, 80);
   const category = inferEpisodeCategory(cleanSeries, cleanTitle, input.category).slice(0, 32);
+  const cleanSynopsis = (input.synopsis.trim() || `${cleanSeries} series.`).slice(0, 240);
+  const safeStartTime = normalizeEpisodeStartSeconds(input.startTime);
 
   try {
     await setDoc(doc(db, 'episodes', id), {
@@ -1338,9 +1559,10 @@ export async function addDramaEpisode(input: {
       duration: (input.duration.trim() || 'Watch & Earn').slice(0, 16),
       rewardCoins: Math.max(1, Math.min(5000, Math.round(input.rewardCoins || 100))),
       coverImage: finalCover,
-      synopsis: (input.synopsis.trim() || `${cleanSeries} series.`).slice(0, 240),
+      synopsis: cleanSynopsis,
       sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
       youtubeUrl: cleanVideo,
+      startTime: safeStartTime,
       sortOrder: Math.max(0, Math.min(10000, Math.round(input.sortOrder))),
       isPublic: true,
       createdAt: serverTimestamp(),
@@ -1349,6 +1571,16 @@ export async function addDramaEpisode(input: {
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }
+
+  await upsertDramaSeries({
+    title: cleanSeries,
+    seriesId,
+    category,
+    coverImage: finalCover,
+    synopsis: cleanSynopsis,
+    episodeIdToAdd: id,
+    sortOrder: input.sortOrder,
+  });
 }
 
 export async function updateDramaEpisode(
@@ -1367,6 +1599,7 @@ export async function updateDramaEpisode(
     sponsorUrl: string;
     youtubeUrl?: string;
     videoUrl?: string;
+    startTime?: number;
     sortOrder?: number;
   }
 ): Promise<void> {
@@ -1407,6 +1640,7 @@ export async function updateDramaEpisode(
     synopsis: (input.synopsis.trim() || `${cleanSeries} series.`).slice(0, 240),
     sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
     youtubeUrl: cleanVideo,
+    startTime: normalizeEpisodeStartSeconds(input.startTime),
   };
 
   try {
@@ -1437,6 +1671,16 @@ export async function updateDramaEpisode(
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
+
+  await upsertDramaSeries({
+    title: cleanSeries,
+    seriesId,
+    category,
+    coverImage: finalCover,
+    synopsis: fields.synopsis,
+    episodeIdToAdd: episodeId,
+    sortOrder: input.sortOrder,
+  });
 }
 
 export async function reorderDramaEpisodes(
@@ -1465,13 +1709,31 @@ export async function reorderDramaEpisodes(
   }
 }
 
-export async function deleteDramaEpisode(episodeId: string): Promise<void> {
+export async function deleteDramaEpisode(
+  episodeId: string,
+  seriesIdHint?: string
+): Promise<void> {
   const path = `episodes/${episodeId}`;
+  let resolvedSeriesId = seriesIdHint || '';
   try {
     const docRef = doc(db, 'episodes', episodeId);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
+      const epData = snap.data() as Partial<DramaEpisode>;
+      if (!resolvedSeriesId) {
+        resolvedSeriesId = getEpisodeSeriesId(epData);
+      }
       await deleteDoc(docRef);
+    }
+    if (resolvedSeriesId) {
+      const seriesRef = doc(db, 'series', resolvedSeriesId);
+      const seriesSnap = await getDoc(seriesRef);
+      if (seriesSnap.exists()) {
+        await updateDoc(seriesRef, {
+          episodeIds: arrayRemove(episodeId),
+          updatedAt: serverTimestamp(),
+        });
+      }
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);

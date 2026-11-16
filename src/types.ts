@@ -1,6 +1,6 @@
 import { Timestamp } from 'firebase/firestore';
 
-export type AppTab = 'watch' | 'vault' | 'leaderboard' | 'me';
+export type AppTab = 'watch' | 'foryou' | 'vault' | 'me';
 
 export type WeekDayKey = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 
@@ -13,11 +13,26 @@ export interface StreakDaySpec {
 export interface LeaderboardPlayer {
   uid: string;
   username: string;
+  avatar?: string;
   coins: number;
   weeklyCoins: number;
   qualified: boolean;
   streakCount: number;
   sundayBonusZar?: number;
+  isPublic: boolean;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export interface DramaSeries {
+  id: string;
+  seriesId: string;
+  title: string;
+  category: string;
+  coverImage: string;
+  synopsis: string;
+  episodeIds: string[];
+  sortOrder: number;
   isPublic: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
@@ -56,6 +71,7 @@ export interface DramaEpisode {
   sponsorUrl: string;
   youtubeUrl?: string;
   videoUrl?: string;
+  startTime?: number;
   sortOrder: number;
   isPublic: boolean;
   createdAt?: Timestamp;

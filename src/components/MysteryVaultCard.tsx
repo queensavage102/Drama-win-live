@@ -1,5 +1,5 @@
 import React, { useId, useState } from 'react';
-import { Sparkles, Check, Copy, X, Trophy, ExternalLink, PartyPopper } from 'lucide-react';
+import { Sparkles, Check, Copy, X, Trophy, PartyPopper } from 'lucide-react';
 import { BRAND_NAME } from '../constants';
 import { MysteryWinnerRecord, PlayerPrivate } from '../types';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
@@ -364,7 +364,6 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                       <span className="font-mono-num text-xs font-bold tracking-wider text-[#FCE7A2]">
                         #{boxNumber}
                       </span>
-                      <ExternalLink className="w-3 h-3 text-[#D4AF37]/80" />
                     </div>
                   </>
                 )}
@@ -376,10 +375,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                 <button
                   key={boxNumber}
                   type="button"
-                  onClick={() => {
-                    window.open('https://asiafilm.org', '_blank');
-                    onOpenMysteryBox(boxNumber);
-                  }}
+                  onClick={() => onOpenMysteryBox(boxNumber)}
                   aria-label={`Open Mystery Gift Box ${boxNumber}`}
                   className={boxClasses}
                 >

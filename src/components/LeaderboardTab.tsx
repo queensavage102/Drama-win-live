@@ -233,6 +233,21 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
               const rank = idx + 1;
               const isMe = entry.uid === currentUserId;
               const sundayWinner = getSundayWinnerBadge(entry.uid);
+              const initials =
+                entry.avatar ||
+                entry.username
+                  .split(/\s+/)
+                  .map((part) => part[0] || '')
+                  .join('')
+                  .slice(0, 2)
+                  .toUpperCase();
+              const avatarPalette = [
+                'from-amber-400 to-orange-500 text-zinc-950',
+                'from-fuchsia-500 to-purple-600 text-white',
+                'from-emerald-400 to-teal-600 text-zinc-950',
+                'from-sky-400 to-indigo-600 text-white',
+                'from-rose-400 to-pink-600 text-white',
+              ][idx % 5];
 
               return (
                 <div
@@ -247,12 +262,21 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <span
-                      className={`font-mono-num text-sm font-bold w-9 shrink-0 ${
+                      className={`font-mono-num text-sm font-bold w-8 shrink-0 ${
                         sundayWinner || rank <= 3 ? 'text-[#E8C96D]' : 'text-[#8D867A]'
                       }`}
                     >
                       #{rank}
                     </span>
+
+                    <div
+                      aria-hidden="true"
+                      className={`w-9 h-9 rounded-full bg-gradient-to-br ${
+                        isMe ? 'from-yellow-300 via-amber-400 to-orange-500 text-zinc-950 ring-2 ring-amber-300/70' : avatarPalette
+                      } flex items-center justify-center font-bold text-xs shrink-0 shadow-md`}
+                    >
+                      {initials}
+                    </div>
 
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">

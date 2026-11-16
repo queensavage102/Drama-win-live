@@ -1,51 +1,31 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Clapperboard,
   Coins,
-  Crown,
   Gift,
   Shield,
-  Trophy,
-  User,
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import { BRAND_NAME } from '../constants';
-import { AppTab } from '../types';
 
 interface TopHeaderProps {
   coins: number;
   sundayBonusZar: number;
   muted: boolean;
-  activeTab: AppTab;
-  onSelectTab: (tab: AppTab) => void;
+  onOpenGiftVault: () => void;
   onToggleMute: () => void;
   onOpenAdmin: () => void;
 }
-
-const TOP_NAV_TABS: {
-  id: AppTab;
-  label: string;
-  Icon: React.FC<{ className?: string }>;
-}[] = [
-  { id: 'watch', label: 'Series', Icon: Clapperboard },
-  { id: 'vault', label: 'Check-In & Gifts', Icon: Gift },
-  { id: 'leaderboard', label: 'Leaderboard', Icon: Trophy },
-  { id: 'me', label: 'Me', Icon: User },
-];
 
 export const TopHeader: React.FC<TopHeaderProps> = ({
   coins,
   sundayBonusZar,
   muted,
-  activeTab,
-  onSelectTab,
+  onOpenGiftVault,
   onToggleMute,
   onOpenAdmin,
 }) => {
   const [displayCoins, setDisplayCoins] = useState(coins);
   const [glowActive, setGlowActive] = useState(false);
-  const [floatingDelta, setFloatingDelta] = useState<{ id: number; amount: number } | null>(null);
   const prevCoinsRef = useRef(coins);
   const displayCoinsRef = useRef(coins);
 
@@ -62,12 +42,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
     const delta = coins - previous;
     if (delta > 0) {
       setGlowActive(true);
-      const badgeId = Date.now();
-      setFloatingDelta({ id: badgeId, amount: delta });
       const glowTimer = window.setTimeout(() => setGlowActive(false), 900);
-      const badgeTimer = window.setTimeout(() => {
-        setFloatingDelta((curr) => (curr?.id === badgeId ? null : curr));
-      }, 1500);
 
       const startVal = displayCoinsRef.current;
       const startTime = performance.now();
@@ -87,7 +62,6 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
 
       return () => {
         window.clearTimeout(glowTimer);
-        window.clearTimeout(badgeTimer);
         cancelAnimationFrame(rafId);
       };
     }
@@ -96,135 +70,81 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   }, [coins]);
 
   return (
-    <header className="sticky top-0 z-30 bg-[#070709]/95 backdrop-blur-md border-b border-[#D4AF37]/25 shadow-[0_8px_24px_rgba(0,0,0,0.65)]">
-      {/* Main Brand Header Bar */}
-      <div className="max-w-5xl mx-auto h-[54px] px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-3">
-        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 shrink">
-          <Crown className="w-4 h-4 text-[#D4AF37] shrink-0" />
-          <span className="font-display text-xs sm:text-sm md:text-base font-bold tracking-tight text-[#F6F2E9] truncate">
-            {BRAND_NAME}
+    <header className="sticky top-0 z-30 h-[56px] bg-[#09090b]/92 backdrop-blur-xl border-b border-white/[0.08]">
+      <div className="max-w-6xl mx-auto h-full px-3 sm:px-6 flex items-center justify-between gap-2">
+        {/* Top-Left: Coin Balance Pill */}
+        <div
+          className={`inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] backdrop-blur-md border px-3 py-1.5 min-h-[38px] transition-all duration-300 shrink-0 ${
+            glowActive
+              ? 'border-amber-300 shadow-[0_0_20px_rgba(251,191,36,0.6)] scale-[1.03]'
+              : 'border-amber-400/35'
+          }`}
+        >
+          <span className="w-5 h-5 rounded-full bg-gradient-to-br from-yellow-300 via-amber-400 to-amber-600 flex items-center justify-center text-zinc-950 shrink-0">
+            <Coins className="w-3.5 h-3.5 stroke-[2.4]" />
+          </span>
+          <span className="font-mono-num text-xs sm:text-sm font-extrabold text-amber-200 whitespace-nowrap">
+            {displayCoins.toLocaleString()}
+          </span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400/80 hidden xs:inline">
+            Coins
           </span>
         </div>
 
+        {/* Top-Right: Reward/Cash Pool Pill + Standalone Gift Box + Utility Controls */}
         <div className="flex items-center gap-2 shrink-0">
-          <div className="relative shrink-0">
-            <div
-              className={`gold-gradient-bg text-[#181307] rounded-full px-2.5 sm:px-3 py-1 flex items-center gap-1.5 transition-all duration-300 ${
-                glowActive
-                  ? 'ring-2 ring-[#FFF5CA] shadow-[0_0_24px_rgba(252,231,162,0.75)] scale-[1.04]'
-                  : 'shadow-sm shadow-[#D4AF37]/20'
-              }`}
-            >
-              <Coins className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-mono-num text-[11px] sm:text-xs font-extrabold whitespace-nowrap">
-                {displayCoins.toLocaleString()} Coins
-              </span>
-              <span className="hidden sm:inline text-[#181307]/45 text-xs" aria-hidden="true">
-                ·
-              </span>
-              <span className="hidden sm:inline font-mono-num text-xs font-semibold whitespace-nowrap">
-                +R{sundayBonusZar} Pool
-              </span>
-            </div>
-
-            {floatingDelta && (
-              <span
-                key={floatingDelta.id}
-                aria-hidden="true"
-                className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-[#181307] border border-[#FCE7A2]/80 text-[#FCE7A2] font-mono-num text-[11px] font-extrabold whitespace-nowrap shadow-lg animate-bounce"
-              >
-                +{floatingDelta.amount.toLocaleString()} 🪙
-              </span>
-            )}
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-fuchsia-500/15 via-purple-500/15 to-amber-500/15 backdrop-blur-md border border-fuchsia-400/30 px-2.5 sm:px-3 py-1.5 min-h-[36px] shrink-0">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+            <span className="font-mono-num text-xs font-bold text-white whitespace-nowrap">
+              R{sundayBonusZar}
+            </span>
+            <span className="text-[10px] font-semibold text-fuchsia-200/85 whitespace-nowrap hidden sm:inline">
+              Pool Reward
+            </span>
           </div>
 
           <button
             type="button"
-            onClick={() => onSelectTab('vault')}
-            aria-label="Open Secret Mystery Vault — Free Gift"
-            title="Open Mystery Gifts"
-            className="relative w-10 h-10 rounded-xl bg-gradient-to-br from-yellow-400 via-amber-500 to-orange-600 border-2 border-yellow-200 shadow-[0_0_20px_rgba(251,191,36,0.9)] flex items-center justify-center hover:brightness-110 active:scale-95 transition-transform shrink-0 cursor-pointer"
+            onClick={onOpenGiftVault}
+            aria-label="Open Gift Box Vault"
+            title="Secret Mystery Gift Vault"
+            className="relative min-w-[44px] min-h-[44px] w-11 h-11 rounded-2xl bg-gradient-to-br from-yellow-400 via-amber-500 to-orange-600 border-2 border-yellow-200 shadow-[0_0_18px_rgba(251,191,36,0.8)] flex items-center justify-center hover:brightness-110 active:scale-95 transition-transform shrink-0 cursor-pointer"
           >
-            <Gift className="w-5 h-5 text-zinc-950 stroke-[2.3] animate-bounce" />
+            <Gift className="w-5 h-5 text-zinc-950 stroke-[2.3]" />
             <span
               aria-hidden="true"
-              className="absolute -top-1.5 -right-2 px-1 py-[1px] rounded-full bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 border border-yellow-200 text-[8px] leading-tight font-black tracking-wider text-white shadow-[0_0_8px_rgba(249,115,22,0.95)] flex items-center gap-0.5"
+              className="absolute -top-1 -right-1.5 px-1.5 py-[1px] rounded-full bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 border border-yellow-200 text-[8px] leading-tight font-black tracking-wider text-white shadow-[0_0_8px_rgba(249,115,22,0.9)]"
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-yellow-200 animate-ping" />
-              <span>FREE</span>
+              FREE
             </span>
           </button>
-        </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
             onClick={onToggleMute}
             aria-pressed={!muted}
-            aria-label={muted ? 'Sound Off — tap to turn sound on' : 'Sound On — tap to turn sound off'}
-            className={`min-h-[38px] px-2.5 rounded-lg border text-[11px] sm:text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
-              muted
-                ? 'border-white/[0.12] bg-[#121217] text-[#8D867A] hover:text-[#F6F2E9]'
-                : 'border-[#D4AF37]/40 bg-[#17130A] text-[#FCE7A2] hover:border-[#D4AF37]/70'
-            }`}
+            aria-label={muted ? 'Unmute audio' : 'Mute audio'}
+            className="min-h-[40px] min-w-[40px] rounded-xl bg-white/[0.05] border border-white/[0.09] flex items-center justify-center text-zinc-300 hover:text-white hover:border-white/20 transition-colors cursor-pointer"
           >
             {muted ? (
-              <>
-                <VolumeX className="w-3.5 h-3.5 text-[#8D867A]" />
-                <span className="hidden xs:inline">Sound Off</span>
-              </>
+              <VolumeX className="w-4 h-4 text-zinc-500" />
             ) : (
-              <>
-                <Volume2 className="w-3.5 h-3.5 text-[#D4AF37]" />
-                <span className="hidden xs:inline">Sound On</span>
-              </>
+              <Volume2 className="w-4 h-4 text-amber-300" />
             )}
           </button>
 
           <button
             type="button"
             onClick={onOpenAdmin}
-            className="min-h-[38px] px-2.5 sm:px-3 rounded-lg border border-[#D4AF37]/30 bg-[#121217] text-[#E8C96D] hover:bg-[#1A1A22] hover:border-[#D4AF37]/60 text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            aria-label="Open Admin Board"
+            title="Admin Board"
+            className="min-h-[40px] px-2.5 rounded-xl bg-white/[0.05] border border-white/[0.09] text-zinc-300 hover:text-amber-300 hover:border-amber-400/40 text-xs font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer"
           >
-            <Shield className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Admin</span>
+            <Shield className="w-4 h-4 text-amber-400" />
+            <span className="hidden md:inline">Admin</span>
           </button>
         </div>
       </div>
-
-      {/* 4 Top Navigation Tabs strictly beneath DRAMA WIN TORNEMENT Header */}
-      <nav
-        aria-label="Primary sections"
-        className="border-t border-white/[0.07] bg-[#09090D]"
-      >
-        <div className="max-w-5xl mx-auto px-2 sm:px-6 py-1.5 grid grid-cols-4 gap-1.5">
-          {TOP_NAV_TABS.map(({ id, label, Icon }) => {
-            const isActive = activeTab === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onSelectTab(id)}
-                aria-current={isActive ? 'page' : undefined}
-                className={`min-h-[44px] px-2 py-1.5 rounded-xl flex items-center justify-center gap-1.5 transition-all whitespace-nowrap cursor-pointer ${
-                  isActive
-                    ? 'gold-gradient-bg text-[#181307] shadow-md shadow-[#D4AF37]/25 font-extrabold'
-                    : 'text-[#A69F91] hover:text-[#F6F2E9] hover:bg-white/[0.04] font-semibold'
-                }`}
-              >
-                <Icon
-                  className={`w-4 h-4 shrink-0 ${
-                    isActive ? 'text-[#181307]' : 'text-[#D4AF37]'
-                  }`}
-                />
-                <span className="text-[11px] sm:text-xs tracking-tight truncate">
-                  {label}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
     </header>
   );
 };

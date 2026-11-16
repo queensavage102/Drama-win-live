@@ -1,21 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import {
-  Check,
-  Coins,
-  Flame,
-  RotateCcw,
-  Trophy,
-  UserPlus,
-} from 'lucide-react';
-import { LeaderboardPlayer, PlayerPrivate } from '../types';
+import { Bookmark, Check, Coins, Flame, RotateCcw, Trophy, UserPlus } from 'lucide-react';
+import { getEpisodeSeriesId } from '../constants';
+import { DramaEpisode, LeaderboardPlayer, PlayerPrivate } from '../types';
 
 interface MeTabProps {
   player: LeaderboardPlayer;
   privateState: PlayerPrivate;
+  episodes: DramaEpisode[];
+  myListSeriesIds: string[];
   qualificationThreshold: number;
   poolPrizeZar: number;
   onUpdatePlayerName: (newName: string) => Promise<void>;
   onResetMyCoins: () => Promise<void>;
+  onToggleMyList: (seriesId: string, seriesName: string) => void;
+  onGoToHome: () => void;
 }
 
 const TARGET_TOURNAMENT_COINS = 500000;
@@ -23,10 +21,14 @@ const TARGET_TOURNAMENT_COINS = 500000;
 export const MeTab: React.FC<MeTabProps> = ({
   player,
   privateState,
+  episodes,
+  myListSeriesIds,
   qualificationThreshold,
   poolPrizeZar,
   onUpdatePlayerName,
   onResetMyCoins,
+  onToggleMyList,
+  onGoToHome,
 }) => {
   const [nameInput, setNameInput] = useState(player.username);
   const [savingName, setSavingName] = useState(false);
@@ -193,6 +195,59 @@ export const MeTab: React.FC<MeTabProps> = ({
             style={{ width: `${exactPct}%` }}
           />
         </div>
+      </section>
+
+      {/* Saved My List Section */}
+      <section className="obsidian-card rounded-2xl p-5 space-y-3 border border-white/[0.08]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Bookmark className="w-4 h-4 text-amber-400" />
+            <h2 className="text-sm font-display font-bold text-[#F6F2E9]">
+              My Saved Series ({myListSeriesIds.length})
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onGoToHome}
+            className="text-xs font-semibold text-amber-300 hover:text-amber-200 cursor-pointer"
+          >
+            Browse Home
+          </button>
+        </div>
+
+        {myListSeriesIds.length === 0 ? (
+          <p className="text-xs text-[#8D867A]">
+            Tap <strong className="text-zinc-200">My List</strong> while watching in the For You tab to bookmark series here.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {myListSeriesIds.map((sId) => {
+              const matchedEp = episodes.find((ep) => getEpisodeSeriesId(ep) === sId);
+              const label = matchedEp?.series || sId.replace(/^series-/, '').replace(/-/g, ' ');
+              return (
+                <div
+                  key={sId}
+                  className="rounded-xl bg-[#09090b] border border-white/[0.08] px-3.5 py-2.5 flex items-center justify-between gap-2"
+                >
+                  <button
+                    type="button"
+                    onClick={onGoToHome}
+                    className="text-xs font-semibold text-white hover:text-amber-300 truncate text-left cursor-pointer"
+                  >
+                    {label}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onToggleMyList(sId, label)}
+                    className="text-[11px] font-medium text-zinc-400 hover:text-red-300 shrink-0 cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {/* Reset My Coins to 0 (Test) Card */}
