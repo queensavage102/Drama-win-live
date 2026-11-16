@@ -1042,7 +1042,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       const targetCategory = wsCategory.trim() || inferEpisodeCategory(cleanTitle);
 
       setOptimisticSections((prev) => (prev.includes(cleanTitle) ? prev : [...prev, cleanTitle]));
-      onCreateSection(cleanTitle);
+      await onCreateSection(cleanTitle);
       await onAddEpisode({
         title: `${cleanTitle} — EP 01`,
         series: cleanTitle,

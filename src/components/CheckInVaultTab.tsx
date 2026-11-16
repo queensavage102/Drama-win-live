@@ -17,6 +17,10 @@ interface CheckInVaultTabProps {
   sponsorAdUrl?: string;
   openedBoxesOverride?: number[];
   mysteryReveal: MysteryRevealState | null;
+  pendingGiftBox?: {
+    boxNumber: number;
+    secondsLeft: number;
+  } | null;
   voucherModal: {
     winner: MysteryWinnerRecord;
     newPoolPrizeZar?: number;
@@ -32,6 +36,7 @@ interface CheckInVaultTabProps {
   transactions?: CoinTransaction[];
   onSundayZeroTick?: () => void;
   onCompleteCheckIn: (dayKey: WeekDayKey, rewardCoins: number) => Promise<void>;
+  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
   onOpenMysteryBox: (boxNumber: number) => void;
   onDismissVoucherModal: () => void;
 }
@@ -41,6 +46,7 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
   sponsorAdUrl,
   openedBoxesOverride,
   mysteryReveal,
+  pendingGiftBox,
   voucherModal,
   players,
   currentUserId,
@@ -53,6 +59,7 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
   transactions = [],
   onSundayZeroTick,
   onCompleteCheckIn,
+  onStartSponsorReward,
   onOpenMysteryBox,
   onDismissVoucherModal,
 }) => {
@@ -104,6 +111,7 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
             privateState={privateState}
             sponsorAdUrl={sponsorAdUrl}
             onCompleteCheckIn={onCompleteCheckIn}
+            onStartSponsorReward={onStartSponsorReward}
           />
 
           <MysteryVaultCard
@@ -111,6 +119,7 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
             todayKey={todayKey}
             openedBoxesOverride={openedBoxesOverride}
             mysteryReveal={mysteryReveal}
+            pendingGiftBox={pendingGiftBox}
             voucherModal={voucherModal}
             onOpenMysteryBox={onOpenMysteryBox}
             onDismissVoucherModal={onDismissVoucherModal}

@@ -364,16 +364,25 @@ export function renameLocalSection(
     return { sections: loadLocalSections(currentEpisodes), episodes: currentEpisodes };
   }
 
+  const oldSeriesId = toSeriesId(cleanOld);
+  const newSeriesId = toSeriesId(cleanNew);
   removeDeletedSeriesMarker(cleanNew);
   const existingSections = loadLocalSections(currentEpisodes);
   const mappedSections = Array.from(
-    new Set(existingSections.map((s) => (s === cleanOld ? cleanNew : s)))
+    new Set(existingSections.map((s) => (s === cleanOld || toSeriesId(s) === oldSeriesId ? cleanNew : s)))
   );
   safeWriteJson(LOCAL_SECTIONS_KEY, mappedSections);
 
+  const now = Date.now();
   const updatedEpisodes = currentEpisodes.map((ep) =>
-    ep.series === cleanOld
-      ? { ...ep, series: cleanNew, seriesId: toSeriesId(cleanNew) }
+    ep.series === cleanOld || getEpisodeSeriesId(ep) === oldSeriesId
+      ? {
+          ...ep,
+          series: cleanNew,
+          seriesId: newSeriesId,
+          category: inferEpisodeCategory(cleanNew, ep.title, ep.category),
+          updatedAtMs: now,
+        }
       : ep
   );
   saveLocalEpisodes(updatedEpisodes);
@@ -516,7 +525,7 @@ export function addLocalEpisode(input: {
   const finalCover = explicitCover || autoThumb || '';
   const cleanSeries = input.series.trim().slice(0, 60);
   const cleanTitle = input.title.trim().slice(0, 100);
-  const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: input.seriesId });
+  const seriesId = toSeriesId(cleanSeries);
   const category = inferEpisodeCategory(cleanSeries, cleanTitle, input.category);
 
   const created: DramaEpisode = {
@@ -537,6 +546,7 @@ export function addLocalEpisode(input: {
     startTime: normalizeEpisodeStartSeconds(input.startTime),
     sortOrder: Math.max(0, Math.round(input.sortOrder || current.length + 1)),
     isPublic: true,
+    updatedAtMs: Date.now(),
   };
 
   saveLocalSection(created.series);
@@ -572,7 +582,7 @@ export function updateLocalEpisode(
   const finalCover = explicitCover || autoThumb || '';
   const cleanSeries = input.series.trim().slice(0, 60);
   const cleanTitle = input.title.trim().slice(0, 100);
-  const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: input.seriesId });
+  const seriesId = toSeriesId(cleanSeries);
   const category = inferEpisodeCategory(cleanSeries, cleanTitle, input.category);
 
   const next = current.map((ep) => {
@@ -593,10 +603,11 @@ export function updateLocalEpisode(
       youtubeUrl: cleanVideo,
       videoUrl: cleanVideo,
       startTime: normalizeEpisodeStartSeconds(input.startTime ?? ep.startTime),
+      updatedAtMs: Date.now(),
     };
   });
 
-  saveLocalSection(input.series);
+  saveLocalSection(cleanSeries);
   return saveLocalEpisodes(next);
 }
 
@@ -730,6 +741,7 @@ export function claimLocalMysteryBox(params: {
   const isR5Winner = Boolean(appConfig.nextPickWinsR5) || isNamedWinner;
 
   const is11thBoxJackpot = openedToday.length + 1 === 11;
+  const isOopsPick = !isR5Winner && !is11thBoxJackpot && openedToday.length > 0 && Math.random() < 0.3;
   const chosen: BoxOutcome = isR5Winner
     ? { boxNumber, kind: 'airtime', coins: 0 }
     : is11thBoxJackpot
@@ -738,11 +750,17 @@ export function claimLocalMysteryBox(params: {
           kind: 'jackpot',
           coins: 1000,
         }
-      : {
-          boxNumber,
-          kind: 'coins',
-          coins: 100,
-        };
+      : isOopsPick
+        ? {
+            boxNumber,
+            kind: 'oops',
+            coins: 0,
+          }
+        : {
+            boxNumber,
+            kind: 'coins',
+            coins: 100,
+          };
 
   const entryCost = paidWithCoins ? MYSTERY_ENTRY_COST : 0;
   const walletDelta = chosen.coins - entryCost;
@@ -786,15 +804,18 @@ export function claimLocalMysteryBox(params: {
       openedMysteryBoxesToday: nextOpened,
       lastMysteryPickDate: '',
     },
-    txMeta: {
-      category: 'mystery-box',
-      title:
-        chosen.kind === 'airtime'
-          ? `Mystery Box #${boxNumber} — R5 Airtime Win`
-          : chosen.kind === 'jackpot'
-            ? `Mystery Box #${boxNumber} — 11th Box Jackpot`
-            : `Mystery Box #${boxNumber} Bonus`,
-    },
+    txMeta:
+      chosen.kind === 'oops'
+        ? undefined
+        : {
+            category: 'mystery-box',
+            title:
+              chosen.kind === 'airtime'
+                ? `Mystery Box #${boxNumber} — R5 Airtime Win`
+                : chosen.kind === 'jackpot'
+                  ? `Mystery Box #${boxNumber} — 11th Box Jackpot`
+                  : `Mystery Box #${boxNumber} Bonus`,
+          },
   });
 
   return {

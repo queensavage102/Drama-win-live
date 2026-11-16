@@ -12,12 +12,13 @@ interface DailyCheckInBoxProps {
   privateState: PlayerPrivate;
   sponsorAdUrl?: string;
   onCompleteCheckIn: (dayKey: WeekDayKey, rewardCoins: number) => Promise<void>;
+  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
 }
 
 export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
   privateState,
-  sponsorAdUrl,
   onCompleteCheckIn,
+  onStartSponsorReward,
 }) => {
   const todayWeekday = getTodayWeekdayKey();
   const currentWeek = getCurrentWeekKey();
@@ -31,6 +32,7 @@ export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
       return;
     }
     window.open(DEFAULT_SPONSOR_URL, '_blank');
+    onStartSponsorReward?.();
     setCollecting(true);
     try {
       await onCompleteCheckIn(day.key, day.reward);

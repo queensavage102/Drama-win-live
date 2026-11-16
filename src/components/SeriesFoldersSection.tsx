@@ -29,6 +29,7 @@ import { resolveEpisodeCover } from '../utils/localState';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { BottomAdBanner } from './BottomAdBanner';
 import { EpisodeWatchScreen } from './EpisodeWatchScreen';
+import { InstallAppWidget } from './InstallAppWidget';
 
 interface SeriesFoldersSectionProps {
   sections: string[];
@@ -39,8 +40,10 @@ interface SeriesFoldersSectionProps {
   playerTotalCoins: number;
   qualificationThreshold: number;
   muted: boolean;
+  resumePlaybackSignal?: number;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
+  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
   onClaimHeroBonus?: () => Promise<void>;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
 }
@@ -216,8 +219,10 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   playerTotalCoins,
   qualificationThreshold,
   muted,
+  resumePlaybackSignal,
   onToggleMute,
   onAwardCoinPot,
+  onStartSponsorReward,
   onClaimHeroBonus,
   onMarkEpisodeWatched,
 }) => {
@@ -529,6 +534,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                   e.preventDefault();
                   e.stopPropagation();
                   window.open(DEFAULT_SPONSOR_URL, '_blank');
+                  onStartSponsorReward?.();
                   if (onClaimHeroBonus) {
                     void onClaimHeroBonus();
                   }
@@ -596,6 +602,9 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
             </p>
           </div>
         )}
+
+        {/* Install DramaWin App (PWA) Widget below Hero Carousel */}
+        <InstallAppWidget storageKey="dramawin_install_home_dismissed_v1" />
 
         {/* 2. Genre Filter Pills */}
         {seriesGroups.length > 0 && (
@@ -905,8 +914,10 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
           playerTotalCoins={playerTotalCoins}
           qualificationThreshold={qualificationThreshold}
           muted={muted}
+          resumePlaybackSignal={resumePlaybackSignal}
           onToggleMute={onToggleMute}
           onAwardCoinPot={onAwardCoinPot}
+          onStartSponsorReward={onStartSponsorReward}
           onMarkEpisodeWatched={onMarkEpisodeWatched}
           onClose={() => setActivePlayerEpisode(null)}
         />

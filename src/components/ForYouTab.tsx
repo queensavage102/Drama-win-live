@@ -41,10 +41,12 @@ interface ForYouTabProps {
   playerTotalCoins: number;
   qualificationThreshold: number;
   muted: boolean;
+  resumePlaybackSignal?: number;
   onToggleMute: () => void;
   onToggleMyList: (seriesId: string, seriesName: string) => void;
   onShareEpisode: (episode: DramaEpisode) => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
+  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
   onSwitchToHome: () => void;
 }
@@ -77,10 +79,12 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   playerTotalCoins,
   qualificationThreshold,
   muted,
+  resumePlaybackSignal,
   onToggleMute,
   onToggleMyList,
   onShareEpisode,
   onAwardCoinPot,
+  onStartSponsorReward,
   onMarkEpisodeWatched,
   onSwitchToHome,
 }) => {
@@ -685,6 +689,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         baseCoins={COIN_POT_BASE_REWARD}
         sponsorUrl={currentEpisode.sponsorUrl || sponsorAdUrl || DEFAULT_SPONSOR_URL}
         episodeTitle={`${currentEpisode.series} — ${currentEpisode.episodeLabel}`}
+        onStartSponsorTimer={() => onStartSponsorReward?.()}
         onClaimDouble={() => handleClaimReward(COIN_POT_BASE_REWARD * 2)}
         onClaimBase={() => handleClaimReward(COIN_POT_BASE_REWARD)}
       />
@@ -699,8 +704,10 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           playerTotalCoins={playerTotalCoins}
           qualificationThreshold={qualificationThreshold}
           muted={muted}
+          resumePlaybackSignal={resumePlaybackSignal}
           onToggleMute={onToggleMute}
           onAwardCoinPot={onAwardCoinPot}
+          onStartSponsorReward={onStartSponsorReward}
           onMarkEpisodeWatched={onMarkEpisodeWatched}
           onClose={() => setFullScreenEpisode(null)}
         />

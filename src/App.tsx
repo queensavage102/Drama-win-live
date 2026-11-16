@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import { AlertTriangle, Crown, Flame, X } from 'lucide-react';
-import { AdminBoardPage, AdminEpisodeFormInput } from './components/AdminBoardPage';
+import { AdminBoardPage } from './components/AdminBoardPage';
 import { BottomNavBar } from './components/BottomNavBar';
 import { CheckInVaultTab } from './components/CheckInVaultTab';
 import { ConfettiExplosion } from './components/ConfettiExplosion';
@@ -20,59 +20,42 @@ import {
   DEFAULT_QUALIFICATION_THRESHOLD,
   DEFAULT_SPONSOR_URL,
   STREAK_DAYS,
-  deduplicateEpisodeList,
-  forceSaveDefaultEpisodesToLocalStorage,
-  getCanonicalVideoKey,
   getCurrentWeekKey,
-  getEpisodeSeriesId,
   getMondayStartTimestampSAST,
   getTodayDateKey,
   getTodayWeekdayKey,
-  inferEpisodeCategory,
-  isLegacyBrokenEpisode,
   sanitizeExternalUrl,
-  syncLocalStorageCatalogMigration,
-  toSeriesId,
 } from './constants';
+import { CatalogProvider, useCatalog } from './context/CatalogContext';
 import { auth, googleProvider } from './firebase';
 import {
-  addDramaEpisode,
   adminAdjustPlayerCoins,
   awardHeroBonusCoins,
   awardMysteryBoxCoins,
   awardWatchPotCoins,
   claimStreakDay,
-  deleteDramaEpisode,
-  deleteDramaSeriesFromFirestore,
   evaluateSundayPoolRollover,
   fetchPlayerProfile,
   markEpisodeAsWatched,
   mergeWatchedEpisodeId,
   purgeLegacyAndStrayEpisodesFromFirestore,
-  reorderDramaEpisodes,
   resetPlayerCoinsToZero,
-  restoreDefaultEpisodes,
   subscribeAppConfig,
-  subscribeEpisodes,
   subscribeLeaderboard,
   subscribeMysteryWinners,
   subscribePlayerPrivate,
-  subscribeSeries,
   subscribeTransactions,
   unlockAdminAccess,
-  updateDramaEpisode,
   updateEmbeddedAdHtml,
   updateLiveTickerConfig,
   updateMysteryAndRolloverConfig,
   updateSponsorAdUrl,
-  upsertDramaSeries,
 } from './services/dramawinService';
 import {
   AppConfig,
   AppTab,
   CoinTransaction,
   DramaEpisode,
-  DramaSeries,
   LeaderboardPlayer,
   MysteryWinnerRecord,
   PlayerPrivate,
@@ -80,33 +63,19 @@ import {
   WeekDayKey,
 } from './types';
 import {
-  addLocalEpisode,
   applyLocalCoinMutation,
   claimLocalMysteryBox,
-  deleteLocalEpisode,
-  deleteLocalSection,
   getOrCreateGuestSession,
-  isEpisodeDeleted,
-  loadDeletedIds,
   loadLocalAppConfig,
-  loadLocalEpisodes,
   loadLocalLeaderboard,
   loadLocalMysteryWinners,
-  loadLocalSections,
   loadLocalTransactions,
   loadMyListSeriesIds,
   mergeLeaderboardWithSeedPlayers,
-  recordDeletedIds,
-  removeDeletedSeriesMarker,
-  renameLocalSection,
-  reorderLocalSeries,
   resetLocalMysteryBoxes,
   resetLocalPlayerCoins,
   saveLocalAppConfig,
-  saveLocalEpisodes,
-  saveLocalSection,
   toggleMyListSeriesId,
-  updateLocalEpisode,
   updateLocalGuestUsername,
   upsertLocalLeaderboardPlayer,
 } from './utils/localState';
@@ -147,11 +116,20 @@ function isAdminPath(): boolean {
 }
 
 function DramaWinApp() {
-  const initialSession = useMemo(() => {
-    syncLocalStorageCatalogMigration();
-    return getOrCreateGuestSession();
-  }, []);
-  const initialEpisodes = useMemo(() => loadLocalEpisodes(), []);
+  const {
+    episodes,
+    sections,
+    createSection,
+    renameSection,
+    deleteSection,
+    addEpisode,
+    updateEpisode,
+    deleteEpisode,
+    reorderSeries,
+    restoreCatalogDefaults,
+  } = useCatalog();
+
+  const initialSession = useMemo(() => getOrCreateGuestSession(), []);
 
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [guestPlayer, setGuestPlayer] = useState<LeaderboardPlayer>(initialSession.player);
@@ -159,10 +137,6 @@ function DramaWinApp() {
 
   const [cloudPrivateProfile, setCloudPrivateProfile] = useState<PlayerPrivate | null>(null);
   const [cloudLeaderboard, setCloudLeaderboard] = useState<LeaderboardPlayer[]>([]);
-  const [cloudEpisodes, setCloudEpisodes] = useState<DramaEpisode[]>([]);
-  const [cloudSeries, setCloudSeries] = useState<DramaSeries[]>([]);
-  const [cloudEpisodesLoaded, setCloudEpisodesLoaded] = useState<boolean>(false);
-  const [cloudSeriesLoaded, setCloudSeriesLoaded] = useState<boolean>(false);
   const [cloudAppConfig, setCloudAppConfig] = useState<AppConfig | null>(null);
   const [cloudWinners, setCloudWinners] = useState<MysteryWinnerRecord[]>([]);
   const [cloudTransactions, setCloudTransactions] = useState<CoinTransaction[]>([]);
@@ -170,8 +144,6 @@ function DramaWinApp() {
   const [localLeaderboard, setLocalLeaderboard] = useState<LeaderboardPlayer[]>(() =>
     loadLocalLeaderboard(initialSession.player)
   );
-  const [localEpisodes, setLocalEpisodes] = useState<DramaEpisode[]>(initialEpisodes);
-  const [localSections, setLocalSections] = useState<string[]>(() => loadLocalSections(initialEpisodes));
   const [localAppConfig, setLocalAppConfig] = useState<AppConfig>(() => loadLocalAppConfig());
   const [localWinners, setLocalWinners] = useState<MysteryWinnerRecord[]>(() =>
     loadLocalMysteryWinners()
@@ -192,10 +164,10 @@ function DramaWinApp() {
   const [activeTab, setActiveTab] = useState<AppTab>('watch');
   const [giftVaultModalOpen, setGiftVaultModalOpen] = useState(false);
   const [myListSeriesIds, setMyListSeriesIds] = useState<string[]>(() => loadMyListSeriesIds());
-  const [deletedIds, setDeletedIds] = useState<string[]>(() => loadDeletedIds());
   const [toast, setToast] = useState<ToastNotice | null>(null);
   const [cloudOpenedBoxes, setCloudOpenedBoxes] = useState<number[]>([]);
   const [mysteryReveal, setMysteryReveal] = useState<MysteryRevealState | null>(null);
+  const [pendingGiftBoxNumber, setPendingGiftBoxNumber] = useState<number | null>(null);
   const [mysteryVoucherModal, setMysteryVoucherModal] = useState<{
     winner: MysteryWinnerRecord;
     newPoolPrizeZar?: number;
@@ -204,11 +176,31 @@ function DramaWinApp() {
   const [muted, setMuted] = useState<boolean>(() => isSoundMuted());
   const [confettiActive, setConfettiActive] = useState(false);
   const [splashDone, setSplashDone] = useState<boolean>(() => isAdminPath());
+  const [sponsorLoading, setSponsorLoading] = useState<{
+    progress: number;
+    secondsLeft: number;
+  } | null>(null);
+  const [resumePlaybackSignal, setResumePlaybackSignal] = useState(0);
 
   const streakReminderShownRef = useRef<string | null>(null);
   const purgedStrayFirestoreRef = useRef<boolean>(false);
-  const prevCloudEpisodesCountRef = useRef<number>(0);
   const mysteryResetTimerRef = useRef<number | null>(null);
+  const cloudOpenedBoxesRef = useRef<number[]>(cloudOpenedBoxes);
+  const sponsorFlowRef = useRef<{
+    active: boolean;
+    startedAt: number;
+    leftApp: boolean;
+    rewardAction: (() => Promise<void>) | null;
+  }>({
+    active: false,
+    startedAt: 0,
+    leftApp: false,
+    rewardAction: null,
+  });
+
+  useEffect(() => {
+    cloudOpenedBoxesRef.current = cloudOpenedBoxes;
+  }, [cloudOpenedBoxes]);
 
   useEffect(() => {
     return () => {
@@ -217,6 +209,61 @@ function DramaWinApp() {
       }
     };
   }, []);
+
+  const finishSponsorRewardFlow = useCallback(() => {
+    const flow = sponsorFlowRef.current;
+    if (!flow.active) return;
+    flow.active = false;
+    const pendingReward = flow.rewardAction;
+    flow.rewardAction = null;
+
+    setSponsorLoading(null);
+    setPendingGiftBoxNumber(null);
+    setResumePlaybackSignal((prev) => prev + 1);
+    if (pendingReward) {
+      void pendingReward().catch(() => {});
+    }
+  }, []);
+
+  const startSponsorRewardFlow = useCallback((rewardAction?: () => Promise<void>) => {
+    if (sponsorFlowRef.current.active && sponsorFlowRef.current.rewardAction) {
+      const prevAction = sponsorFlowRef.current.rewardAction;
+      sponsorFlowRef.current.rewardAction = null;
+      void prevAction().catch(() => {});
+    }
+    setPendingGiftBoxNumber(null);
+    sponsorFlowRef.current = {
+      active: true,
+      startedAt: Date.now(),
+      leftApp: false,
+      rewardAction: rewardAction || null,
+    };
+    setSponsorLoading({ progress: 0, secondsLeft: 20 });
+  }, []);
+
+  const isSponsorFlowActive = sponsorLoading !== null;
+
+  useEffect(() => {
+    if (!isSponsorFlowActive) return;
+
+    const totalMs = 20000;
+    const interval = window.setInterval(() => {
+      const flow = sponsorFlowRef.current;
+      if (!flow.active) return;
+      const elapsed = Date.now() - flow.startedAt;
+      const progress = Math.min(100, (elapsed / totalMs) * 100);
+      const secondsLeft = Math.max(0, Math.ceil((totalMs - elapsed) / 1000));
+      setSponsorLoading({ progress, secondsLeft });
+
+      if (elapsed >= totalMs) {
+        finishSponsorRewardFlow();
+      }
+    }, 50);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [isSponsorFlowActive, finishSponsorRewardFlow]);
 
   // Use cloud session only if user is signed into Firebase Auth AND has a cloud profile;
   // otherwise run 100% seamlessly in instant localStorage mode with zero auth wall.
@@ -253,52 +300,6 @@ function DramaWinApp() {
     [isCloudMode, cloudLeaderboard, localLeaderboard, currentPlayer]
   );
 
-  const deletedIdSet = useMemo(() => new Set(deletedIds), [deletedIds]);
-
-  const episodes: DramaEpisode[] = useMemo(() => {
-    const rawBase = cloudEpisodesLoaded
-      ? firebaseUser
-        ? cloudEpisodes
-        : [...cloudEpisodes, ...localEpisodes]
-      : localEpisodes;
-    return deduplicateEpisodeList(
-      rawBase.filter(
-        (ep) => !isLegacyBrokenEpisode(ep) && !isEpisodeDeleted(ep, deletedIdSet)
-      )
-    ).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-  }, [cloudEpisodesLoaded, firebaseUser, cloudEpisodes, localEpisodes, deletedIdSet]);
-
-  const sections: string[] = useMemo(() => {
-    const map = new Map<string, string>();
-    const register = (raw: string) => {
-      const clean = raw.trim().replace(/\s+/g, ' ');
-      if (!clean || /gojo|jujutsu|jjk|candy\s*man/i.test(clean)) return;
-      const sId = toSeriesId(clean);
-      if (deletedIdSet.has(sId)) return;
-      if (!map.has(sId)) map.set(sId, clean);
-    };
-
-    if (cloudSeriesLoaded || cloudEpisodesLoaded) {
-      cloudSeries.forEach((s) => register(s.title));
-      episodes.forEach((ep) => register(ep.series));
-      if (!firebaseUser) {
-        localSections.forEach(register);
-      }
-    } else {
-      localSections.forEach(register);
-      episodes.forEach((ep) => register(ep.series));
-    }
-    return Array.from(map.values());
-  }, [
-    cloudSeriesLoaded,
-    cloudEpisodesLoaded,
-    cloudSeries,
-    episodes,
-    localSections,
-    deletedIdSet,
-    firebaseUser,
-  ]);
-
   const appConfig: AppConfig = useMemo(() => {
     const base = cloudAppConfig ? cloudAppConfig : localAppConfig;
     return {
@@ -319,6 +320,7 @@ function DramaWinApp() {
 
   const latestStateRef = useRef({
     isCloudMode,
+    firebaseUser,
     currentPlayer,
     privateProfile,
     appConfig,
@@ -328,12 +330,13 @@ function DramaWinApp() {
   useEffect(() => {
     latestStateRef.current = {
       isCloudMode,
+      firebaseUser,
       currentPlayer,
       privateProfile,
       appConfig,
       muted,
     };
-  }, [isCloudMode, currentPlayer, privateProfile, appConfig, muted]);
+  }, [isCloudMode, firebaseUser, currentPlayer, privateProfile, appConfig, muted]);
 
   // Unlock Web Audio engine on first user gesture
   useEffect(() => {
@@ -401,7 +404,7 @@ function DramaWinApp() {
     setSoundMuted(next);
   };
 
-  // Always subscribe to public Firestore appConfig, series, and episodes for ALL visitors (zero auth wall)
+  // Always subscribe to public Firestore appConfig for ALL visitors (zero auth wall)
   useEffect(() => {
     const unsubConfig = subscribeAppConfig(
       (cfg) => {
@@ -417,47 +420,8 @@ function DramaWinApp() {
       }
     );
 
-    const unsubSeries = subscribeSeries(
-      (seriesList) => {
-        const currentDeleted = new Set(loadDeletedIds());
-        const cleanSeries = seriesList.filter(
-          (s) =>
-            !currentDeleted.has(s.seriesId) &&
-            !currentDeleted.has(s.id) &&
-            !/gojo|jujutsu|jjk|candy\s*man/i.test(`${s.seriesId} ${s.title}`)
-        );
-        setCloudSeriesLoaded(true);
-        setCloudSeries(cleanSeries);
-      },
-      () => {
-        // Keep local fallback active if Firestore is unreachable
-      }
-    );
-
-    const unsubEpisodes = subscribeEpisodes(
-      (items) => {
-        const currentDeleted = new Set(loadDeletedIds());
-        const clean = deduplicateEpisodeList(
-          items.filter(
-            (ep) => !isLegacyBrokenEpisode(ep) && !isEpisodeDeleted(ep, currentDeleted)
-          )
-        );
-        setCloudEpisodesLoaded(true);
-        setCloudEpisodes(clean);
-        prevCloudEpisodesCountRef.current = clean.length;
-        const synced = saveLocalEpisodes(clean);
-        setLocalEpisodes(synced);
-        setLocalSections(loadLocalSections(synced));
-      },
-      () => {
-        // Keep local fallback active if Firestore is unreachable
-      }
-    );
-
     return () => {
       unsubConfig();
-      unsubSeries();
-      unsubEpisodes();
     };
   }, []);
 
@@ -612,138 +576,222 @@ function DramaWinApp() {
     qualificationThreshold,
   ]);
 
-  const handleOpenMysteryBox = (boxNumber: number) => {
-    const todayKey = getTodayDateKey();
-    const {
-      isCloudMode: cloudNow,
-      currentPlayer: player,
-      privateProfile: priv,
-      appConfig: latestCfg,
-      muted: isMutedNow,
-    } = latestStateRef.current;
+  const resolveGiftBoxOutcome = useCallback(
+    (boxNumber: number) => {
+      setPendingGiftBoxNumber(null);
+      const todayKey = getTodayDateKey();
+      const {
+        isCloudMode: cloudNow,
+        firebaseUser: activeUser,
+        currentPlayer: player,
+        privateProfile: priv,
+        appConfig: latestCfg,
+        muted: isMutedNow,
+      } = latestStateRef.current;
 
-    const scheduleVaultAutoReset = (isCloudReset: boolean, uid?: string) => {
-      if (mysteryResetTimerRef.current !== null) {
-        window.clearTimeout(mysteryResetTimerRef.current);
-      }
-      mysteryResetTimerRef.current = window.setTimeout(() => {
-        mysteryResetTimerRef.current = null;
-        if (isCloudReset && uid) {
-          setCloudOpenedBoxes([]);
-          writeCloudOpenedBoxes(uid, getTodayDateKey(), []);
-        } else {
-          setGuestPrivate((curr) => resetLocalMysteryBoxes(curr));
+      const scheduleVaultAutoReset = (isCloudReset: boolean, uid?: string) => {
+        if (mysteryResetTimerRef.current !== null) {
+          window.clearTimeout(mysteryResetTimerRef.current);
         }
-        setMysteryReveal(null);
-      }, 4000);
-    };
+        mysteryResetTimerRef.current = window.setTimeout(() => {
+          mysteryResetTimerRef.current = null;
+          if (isCloudReset && uid) {
+            cloudOpenedBoxesRef.current = [];
+            setCloudOpenedBoxes([]);
+            writeCloudOpenedBoxes(uid, getTodayDateKey(), []);
+          } else {
+            setGuestPrivate((curr) => resetLocalMysteryBoxes(curr));
+          }
+          setMysteryReveal(null);
+        }, 4000);
+      };
 
-    if (cloudNow && firebaseUser) {
-      if (cloudOpenedBoxes.includes(boxNumber) || cloudOpenedBoxes.length >= 11) {
+      if (cloudNow && activeUser) {
+        const currentOpened = cloudOpenedBoxesRef.current;
+        if (currentOpened.includes(boxNumber) || currentOpened.length >= 11) {
+          return;
+        }
+
+        const nextOpened = Array.from(new Set([...currentOpened, boxNumber]));
+        cloudOpenedBoxesRef.current = nextOpened;
+        setCloudOpenedBoxes(nextOpened);
+        writeCloudOpenedBoxes(activeUser.uid, todayKey, nextOpened);
+
+        const is11thBoxJackpot = nextOpened.length === 11;
+        const isOopsPick = !is11thBoxJackpot && currentOpened.length >= 1 && Math.random() < 0.3;
+        const threshold = latestCfg.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
+
+        if (is11thBoxJackpot) {
+          setMysteryReveal({
+            dateKey: todayKey,
+            boxNumber,
+            kind: 'jackpot',
+            coins: 1000,
+          });
+          setConfettiActive(true);
+          playCoinPotCashChime(isMutedNow);
+          playVictoryFanfare(isMutedNow);
+          showToast(
+            '🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁',
+            1000
+          );
+          scheduleVaultAutoReset(true, activeUser.uid);
+          void awardMysteryBoxCoins(
+            player,
+            priv,
+            boxNumber,
+            1000,
+            threshold,
+            true
+          ).catch(() => {});
+        } else if (isOopsPick) {
+          setMysteryReveal({
+            dateKey: todayKey,
+            boxNumber,
+            kind: 'oops',
+            coins: 0,
+          });
+          showToast('Oops, sorry try next box 🥲', undefined, 'neutral');
+        } else {
+          setMysteryReveal({
+            dateKey: todayKey,
+            boxNumber,
+            kind: 'coins',
+            coins: 100,
+          });
+          playCoinChime(isMutedNow);
+          showToast(`🎁 Gift Box #${boxNumber} Opened! +100 Coins Added to Wallet!`, 100);
+          void awardMysteryBoxCoins(
+            player,
+            priv,
+            boxNumber,
+            100,
+            threshold,
+            false
+          ).catch(() => {});
+        }
         return;
       }
 
-      const nextOpened = Array.from(new Set([...cloudOpenedBoxes, boxNumber]));
-      setCloudOpenedBoxes(nextOpened);
-      writeCloudOpenedBoxes(firebaseUser.uid, todayKey, nextOpened);
+      try {
+        const result = claimLocalMysteryBox({
+          player,
+          privateProfile: priv,
+          boxNumber,
+          paidWithCoins: false,
+          appConfig: latestCfg,
+        });
+        setGuestPlayer(result.player);
+        setGuestPrivate(result.privateProfile);
+        setLocalTransactions(result.transactions);
+        setLocalLeaderboard(loadLocalLeaderboard(result.player));
+        setLocalAppConfig(result.appConfig);
+        setLocalWinners(loadLocalMysteryWinners());
 
-      const is11thBoxJackpot = nextOpened.length === 11;
-      const rewardCoins = is11thBoxJackpot ? 1000 : 100;
-      const threshold = latestCfg.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
-
-      if (is11thBoxJackpot) {
-        setMysteryReveal({
+        const revealPayload: MysteryRevealState = {
           dateKey: todayKey,
           boxNumber,
-          kind: 'jackpot',
-          coins: 1000,
-        });
-        setConfettiActive(true);
-        playCoinPotCashChime(isMutedNow);
-        playVictoryFanfare(isMutedNow);
+          kind: result.outcome.kind,
+          coins: result.outcome.coins,
+          winnerRecord: result.winnerRecord,
+          newPoolPrizeZar: result.newPoolPrizeZar,
+        };
+        setMysteryReveal(revealPayload);
+
+        if (result.outcome.kind === 'jackpot') {
+          setConfettiActive(true);
+          playCoinPotCashChime(isMutedNow);
+          playVictoryFanfare(isMutedNow);
+          showToast(
+            '🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁',
+            1000
+          );
+          scheduleVaultAutoReset(false);
+        } else if (result.outcome.kind === 'oops') {
+          showToast('Oops, sorry try next box 🥲', undefined, 'neutral');
+        } else if (result.outcome.kind === 'coins') {
+          playCoinChime(isMutedNow);
+          showToast(
+            `🎁 Gift Box #${boxNumber} Opened! +${result.outcome.coins} Coins Added to Wallet!`,
+            result.outcome.coins
+          );
+        } else if (result.winnerRecord) {
+          setConfettiActive(true);
+          playCoinChime(isMutedNow);
+          playVictoryFanfare(isMutedNow);
+          setMysteryVoucherModal({
+            winner: result.winnerRecord,
+            newPoolPrizeZar: result.newPoolPrizeZar,
+          });
+          showToast('YOU WON CONGRATULATIONS! 🎉 R5 Airtime unlocked!');
+        }
+      } catch (err) {
         showToast(
-          '🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁',
-          1000
+          err instanceof Error ? err.message : 'Unable to open Mystery Box.',
+          undefined,
+          'error'
         );
-        scheduleVaultAutoReset(true, firebaseUser.uid);
-      } else {
-        setMysteryReveal({
-          dateKey: todayKey,
-          boxNumber,
-          kind: 'coins',
-          coins: 100,
-        });
-        playCoinChime(isMutedNow);
-        showToast('Oops! Sorry, try the next box 😢', 100);
       }
+    },
+    [showToast]
+  );
 
-      void awardMysteryBoxCoins(
-        player,
-        priv,
-        boxNumber,
-        rewardCoins,
-        threshold,
-        is11thBoxJackpot
-      ).catch(() => {
-        // Optimistic vault state already reflected on screen
-      });
+  // Gift Box Ad-First Sequence: FIRST open sponsor URL + start 20s top line, ONLY resolve box after 20s completes
+  const handleOpenMysteryBox = (boxNumber: number) => {
+    if (pendingGiftBoxNumber !== null) {
+      showToast(
+        'Sponsor ad is active — please wait for this Gift Box to unlock!',
+        undefined,
+        'neutral'
+      );
       return;
     }
 
-    try {
-      const result = claimLocalMysteryBox({
-        player,
-        privateProfile: priv,
-        boxNumber,
-        paidWithCoins: false,
-        appConfig: latestCfg,
-      });
-      setGuestPlayer(result.player);
-      setGuestPrivate(result.privateProfile);
-      setLocalTransactions(result.transactions);
-      setLocalLeaderboard(loadLocalLeaderboard(result.player));
-      setLocalAppConfig(result.appConfig);
-      setLocalWinners(loadLocalMysteryWinners());
+    const todayKey = getTodayDateKey();
+    const openedToday = isCloudMode
+      ? cloudOpenedBoxes
+      : privateProfile.openedMysteryBoxesDate === todayKey
+        ? privateProfile.openedMysteryBoxesToday || []
+        : [];
 
-      const revealPayload: MysteryRevealState = {
-        dateKey: todayKey,
-        boxNumber,
-        kind: result.outcome.kind,
-        coins: result.outcome.coins,
-        winnerRecord: result.winnerRecord,
-        newPoolPrizeZar: result.newPoolPrizeZar,
-      };
-      setMysteryReveal(revealPayload);
-
-      if (result.outcome.kind === 'jackpot') {
-        setConfettiActive(true);
-        playCoinPotCashChime(isMutedNow);
-        playVictoryFanfare(isMutedNow);
-        showToast(
-          '🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁',
-          1000
-        );
-        scheduleVaultAutoReset(false);
-      } else if (result.outcome.kind === 'coins') {
-        playCoinChime(isMutedNow);
-        showToast('Oops! Sorry, try the next box 😢', result.outcome.coins);
-      } else if (result.winnerRecord) {
-        setConfettiActive(true);
-        playCoinChime(isMutedNow);
-        playVictoryFanfare(isMutedNow);
-        setMysteryVoucherModal({
-          winner: result.winnerRecord,
-          newPoolPrizeZar: result.newPoolPrizeZar,
-        });
-        showToast('YOU WON CONGRATULATIONS! 🎉 R5 Airtime unlocked!');
-      }
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Unable to open Mystery Box.',
-        undefined,
-        'error'
-      );
+    if (openedToday.includes(boxNumber) || openedToday.length >= 11) {
+      return;
     }
+
+    setMysteryReveal(null);
+    window.open(DEFAULT_SPONSOR_URL, '_blank');
+    startSponsorRewardFlow(async () => {
+      resolveGiftBoxOutcome(boxNumber);
+    });
+    setPendingGiftBoxNumber(boxNumber);
+  };
+
+  const handleOpenGiftVaultFromHeader = () => {
+    setGiftVaultModalOpen(true);
+    if (pendingGiftBoxNumber !== null) {
+      return;
+    }
+
+    const todayKey = getTodayDateKey();
+    const openedToday = isCloudMode
+      ? cloudOpenedBoxes
+      : privateProfile.openedMysteryBoxesDate === todayKey
+        ? privateProfile.openedMysteryBoxesToday || []
+        : [];
+
+    if (openedToday.length >= 11) {
+      return;
+    }
+
+    const targetBox =
+      Array.from({ length: 12 }, (_, idx) => idx + 1).find((n) => !openedToday.includes(n)) ?? 1;
+
+    setMysteryReveal(null);
+    window.open(DEFAULT_SPONSOR_URL, '_blank');
+    startSponsorRewardFlow(async () => {
+      resolveGiftBoxOutcome(targetBox);
+    });
+    setPendingGiftBoxNumber(targetBox);
   };
 
   const handleCompleteDailyCheckIn = async (dayKey: WeekDayKey, reward: number) => {
@@ -1058,139 +1106,6 @@ function DramaWinApp() {
     setAdminUnlocked(false);
   };
 
-  const handleCreateSection = async (name: string) => {
-    const cleanName = name.trim().slice(0, 60);
-    if (!cleanName) return;
-    const seriesId = toSeriesId(cleanName);
-    setDeletedIds(removeDeletedSeriesMarker(cleanName));
-    setLocalSections(saveLocalSection(cleanName));
-    setCloudSeries((prev) => {
-      if (prev.some((s) => s.seriesId === seriesId)) return prev;
-      return [
-        ...prev,
-        {
-          id: seriesId,
-          seriesId,
-          title: cleanName,
-          category: inferEpisodeCategory(cleanName),
-          coverImage: 'none',
-          synopsis: `${cleanName} drama series.`,
-          episodeIds: [],
-          sortOrder: prev.length + 1,
-          isPublic: true,
-        },
-      ];
-    });
-
-    const activeUser = await ensureFirebaseAdminGrant();
-    if (activeUser) {
-      await upsertDramaSeries({
-        title: cleanName,
-        seriesId,
-        category: inferEpisodeCategory(cleanName),
-        sortOrder: cloudSeries.length + 1,
-      });
-    }
-  };
-
-  const handleRenameSection = async (oldName: string, newName: string) => {
-    const cleanNew = newName.trim().slice(0, 60);
-    if (!cleanNew || cleanNew === oldName) return;
-    const oldSeriesId = toSeriesId(oldName);
-    const targetSeriesId = toSeriesId(cleanNew);
-
-    setDeletedIds(removeDeletedSeriesMarker(cleanNew));
-    const result = renameLocalSection(oldName, cleanNew);
-    setLocalEpisodes(result.episodes);
-    setLocalSections(result.sections);
-    setCloudEpisodes((prev) =>
-      prev.map((ep) =>
-        ep.series === oldName || getEpisodeSeriesId(ep) === oldSeriesId
-          ? {
-              ...ep,
-              series: cleanNew,
-              seriesId: targetSeriesId,
-              category: inferEpisodeCategory(cleanNew, ep.title, ep.category),
-            }
-          : ep
-      )
-    );
-    setCloudSeries((prev) =>
-      prev.map((s) =>
-        s.seriesId === oldSeriesId || s.title === oldName
-          ? { ...s, id: targetSeriesId, seriesId: targetSeriesId, title: cleanNew }
-          : s
-      )
-    );
-
-    const activeUser = await ensureFirebaseAdminGrant();
-    if (activeUser) {
-      const matching = (cloudEpisodes.length > 0 ? cloudEpisodes : episodes).filter(
-        (ep) => ep.series === oldName || getEpisodeSeriesId(ep) === oldSeriesId
-      );
-      for (const ep of matching) {
-        await updateDramaEpisode(ep.id, {
-          title: ep.title,
-          series: cleanNew,
-          seriesId: targetSeriesId,
-          category: inferEpisodeCategory(cleanNew, ep.title, ep.category),
-          episodeLabel: ep.episodeLabel,
-          duration: ep.duration,
-          rewardCoins: ep.rewardCoins,
-          coverImage: ep.coverImage,
-          thumbnailUrl: ep.thumbnailUrl,
-          synopsis: ep.synopsis,
-          sponsorUrl: ep.sponsorUrl,
-          youtubeUrl: ep.youtubeUrl,
-          videoUrl: ep.videoUrl,
-          startTime: ep.startTime,
-          sortOrder: ep.sortOrder,
-        });
-      }
-      await deleteDramaSeriesFromFirestore(oldSeriesId, []);
-    }
-  };
-
-  const handleDeleteSection = async (name: string, removeEpisodes = true) => {
-    const targetSeriesId = toSeriesId(name);
-    const matching = (cloudEpisodes.length > 0 ? cloudEpisodes : episodes).filter(
-      (ep) => ep.series === name || getEpisodeSeriesId(ep) === targetSeriesId
-    );
-    const result = deleteLocalSection(name, removeEpisodes);
-    const nextDeleted = recordDeletedIds([
-      targetSeriesId,
-      ...result.deletedIds,
-      ...(removeEpisodes ? matching.map((m) => m.id) : []),
-    ]);
-    setDeletedIds(nextDeleted);
-    setLocalEpisodes(result.episodes);
-    setLocalSections(result.sections);
-
-    setCloudSeries((prev) =>
-      prev.filter((s) => s.seriesId !== targetSeriesId && s.title !== name)
-    );
-
-    if (removeEpisodes) {
-      const removedIds = new Set(matching.map((m) => m.id));
-      setCloudEpisodes((prev) =>
-        prev.filter(
-          (ep) =>
-            !removedIds.has(ep.id) &&
-            ep.series !== name &&
-            getEpisodeSeriesId(ep) !== targetSeriesId
-        )
-      );
-    }
-
-    const activeUser = await ensureFirebaseAdminGrant();
-    if (activeUser) {
-      await deleteDramaSeriesFromFirestore(
-        targetSeriesId,
-        removeEpisodes ? matching.map((m) => m.id) : []
-      );
-    }
-  };
-
   const handleUpdateSponsorUrl = async (newUrl: string) => {
     const sanitized = sanitizeExternalUrl(newUrl).slice(0, 500);
     const nextCfg = saveLocalAppConfig({ ...appConfig, sponsorAdUrl: sanitized });
@@ -1319,187 +1234,8 @@ function DramaWinApp() {
     };
   };
 
-  const handleAddEpisode = async (input: AdminEpisodeFormInput & { sortOrder: number }) => {
-    const episodeId = `ep-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const resolvedSeriesId = getEpisodeSeriesId({ series: input.series, seriesId: input.seriesId });
-    const resolvedCategory = inferEpisodeCategory(input.series, input.title, input.category);
-    const incomingVideoKey = getCanonicalVideoKey(input.videoUrl || input.youtubeUrl);
-
-    if (incomingVideoKey) {
-      const duplicateEp = episodes.find(
-        (ep) =>
-          getEpisodeSeriesId(ep) === resolvedSeriesId &&
-          getCanonicalVideoKey(ep.videoUrl || ep.youtubeUrl) === incomingVideoKey
-      );
-      if (duplicateEp) {
-        throw new Error(
-          `Duplicate blocked: "${duplicateEp.episodeLabel}" ("${duplicateEp.title}") already uses this video URL in "${input.series}".`
-        );
-      }
-    }
-
-    setDeletedIds(removeDeletedSeriesMarker(resolvedSeriesId));
-
-    const normalizedInput: AdminEpisodeFormInput & { sortOrder: number; id: string } = {
-      ...input,
-      id: episodeId,
-      seriesId: resolvedSeriesId,
-      category: resolvedCategory,
-    };
-
-    const nextList = addLocalEpisode(normalizedInput);
-    const createdEp = nextList.find((ep) => ep.id === episodeId);
-    setLocalEpisodes(nextList);
-    setLocalSections(loadLocalSections(nextList));
-
-    if (createdEp) {
-      setCloudEpisodes((prev) => deduplicateEpisodeList([...prev, createdEp]));
-      setCloudSeries((prev) => {
-        const exists = prev.some((s) => s.seriesId === resolvedSeriesId);
-        if (!exists) {
-          return [
-            ...prev,
-            {
-              id: resolvedSeriesId,
-              seriesId: resolvedSeriesId,
-              title: createdEp.series,
-              category: resolvedCategory,
-              coverImage: createdEp.coverImage || 'none',
-              synopsis: createdEp.synopsis,
-              episodeIds: [episodeId],
-              sortOrder: input.sortOrder,
-              isPublic: true,
-            },
-          ];
-        }
-        return prev.map((s) =>
-          s.seriesId === resolvedSeriesId
-            ? {
-                ...s,
-                episodeIds: Array.from(new Set([...(s.episodeIds || []), episodeId])),
-              }
-            : s
-        );
-      });
-    }
-
-    const activeUser = await ensureFirebaseAdminGrant();
-    if (activeUser) {
-      await addDramaEpisode(normalizedInput);
-    }
-  };
-
-  const handleUpdateEpisode = async (episodeId: string, input: AdminEpisodeFormInput) => {
-    const resolvedSeriesId = getEpisodeSeriesId({ series: input.series, seriesId: input.seriesId });
-    const resolvedCategory = inferEpisodeCategory(input.series, input.title, input.category);
-    const incomingVideoKey = getCanonicalVideoKey(input.videoUrl || input.youtubeUrl);
-
-    if (incomingVideoKey) {
-      const duplicateEp = episodes.find(
-        (ep) =>
-          ep.id !== episodeId &&
-          getEpisodeSeriesId(ep) === resolvedSeriesId &&
-          getCanonicalVideoKey(ep.videoUrl || ep.youtubeUrl) === incomingVideoKey
-      );
-      if (duplicateEp) {
-        throw new Error(
-          `Duplicate blocked: "${duplicateEp.episodeLabel}" ("${duplicateEp.title}") already uses this video URL in "${input.series}".`
-        );
-      }
-    }
-
-    const normalizedInput: AdminEpisodeFormInput = {
-      ...input,
-      seriesId: resolvedSeriesId,
-      category: resolvedCategory,
-    };
-    const nextList = updateLocalEpisode(episodeId, normalizedInput);
-    const updatedEp = nextList.find((ep) => ep.id === episodeId);
-    setLocalEpisodes(nextList);
-    setLocalSections(loadLocalSections(nextList));
-
-    if (updatedEp) {
-      setCloudEpisodes((prev) => {
-        const found = prev.some((ep) => ep.id === episodeId);
-        return found
-          ? prev.map((ep) => (ep.id === episodeId ? updatedEp : ep))
-          : deduplicateEpisodeList([...prev, updatedEp]);
-      });
-    }
-
-    const matchedSortOrder =
-      updatedEp?.sortOrder ??
-      episodes.find((ep) => ep.id === episodeId)?.sortOrder ??
-      1;
-
-    const activeUser = await ensureFirebaseAdminGrant();
-    if (activeUser) {
-      await updateDramaEpisode(episodeId, {
-        ...normalizedInput,
-        sortOrder: matchedSortOrder,
-      });
-    }
-  };
-
-  const handleDeleteEpisode = async (episodeId: string) => {
-    const targetEp = episodes.find((ep) => ep.id === episodeId);
-    const seriesIdHint = targetEp ? getEpisodeSeriesId(targetEp) : undefined;
-    setDeletedIds(recordDeletedIds([episodeId]));
-    const nextList = deleteLocalEpisode(episodeId);
-    setLocalEpisodes(nextList);
-    setLocalSections(loadLocalSections(nextList));
-    setCloudEpisodes((prev) => prev.filter((ep) => ep.id !== episodeId));
-    if (seriesIdHint) {
-      setCloudSeries((prev) =>
-        prev.map((s) =>
-          s.seriesId === seriesIdHint
-            ? { ...s, episodeIds: (s.episodeIds || []).filter((id) => id !== episodeId) }
-            : s
-        )
-      );
-    }
-
-    const activeUser = await ensureFirebaseAdminGrant();
-    if (activeUser) {
-      await deleteDramaEpisode(episodeId, seriesIdHint);
-    }
-  };
-
-  const handleReorderSeries = async (orderedSeriesNames: string[]) => {
-    const result = reorderLocalSeries(orderedSeriesNames);
-    setLocalSections(result.sections);
-    setLocalEpisodes(result.episodes);
-
-    const activeUser = await ensureFirebaseAdminGrant();
-    if (activeUser && cloudEpisodes.length > 0) {
-      const orderMap = new Map<string, number>();
-      result.sections.forEach((name, idx) => orderMap.set(name, idx));
-      const sortedCloud = [...cloudEpisodes]
-        .sort((a, b) => {
-          const idxA = orderMap.get(a.series?.trim() || '') ?? 9999;
-          const idxB = orderMap.get(b.series?.trim() || '') ?? 9999;
-          if (idxA !== idxB) return idxA - idxB;
-          return (a.sortOrder || 0) - (b.sortOrder || 0);
-        })
-        .map((ep, idx) => ({ id: ep.id, sortOrder: idx + 1 }));
-      await reorderDramaEpisodes(sortedCloud);
-    }
-  };
-
   const handleRestoreDefaultEpisodes = async () => {
-    const cleared = forceSaveDefaultEpisodesToLocalStorage();
-    setLocalEpisodes(cleared);
-    setLocalSections([]);
-    setCloudEpisodes([]);
-    setCloudSeries([]);
-
-    const activeUser = await ensureFirebaseAdminGrant();
-    if (activeUser) {
-      for (const ep of cloudEpisodes) {
-        await deleteDramaEpisode(ep.id);
-      }
-      await restoreDefaultEpisodes();
-    }
+    await restoreCatalogDefaults();
     showToast('Catalog reset to clean empty state.');
   };
 
@@ -1557,23 +1293,28 @@ function DramaWinApp() {
         onUnlock={handleUnlockAdmin}
         onConnectFirebaseAdmin={handleConnectFirebaseAdmin}
         onLockAdmin={handleLockAdmin}
-        onCreateSection={handleCreateSection}
-        onRenameSection={handleRenameSection}
-        onDeleteSection={handleDeleteSection}
+        onCreateSection={createSection}
+        onRenameSection={renameSection}
+        onDeleteSection={deleteSection}
         onUpdateSponsorUrl={handleUpdateSponsorUrl}
         onUpdateEmbeddedAdHtml={handleUpdateEmbeddedAdHtml}
         onUpdateLiveTicker={handleUpdateLiveTicker}
         onUpdateMysteryAndRollover={handleUpdateMysteryAndRollover}
         onTriggerSundayRollover={handleTriggerSundayRollover}
-        onAddEpisode={handleAddEpisode}
-        onUpdateEpisode={handleUpdateEpisode}
-        onDeleteEpisode={handleDeleteEpisode}
-        onReorderSeries={handleReorderSeries}
+        onAddEpisode={addEpisode}
+        onUpdateEpisode={updateEpisode}
+        onDeleteEpisode={deleteEpisode}
+        onReorderSeries={reorderSeries}
         onRestoreDefaultEpisodes={handleRestoreDefaultEpisodes}
         onAdjustPlayerCoins={handleAdjustPlayerCoins}
       />
     );
   }
+
+  const pendingGiftBox =
+    pendingGiftBoxNumber !== null && sponsorLoading
+      ? { boxNumber: pendingGiftBoxNumber, secondsLeft: sponsorLoading.secondsLeft }
+      : null;
 
   return (
     <div className="min-h-screen bg-[#09090b] text-[#F6F2E9] pb-24">
@@ -1584,11 +1325,28 @@ function DramaWinApp() {
         onComplete={() => setConfettiActive(false)}
       />
 
+      {/* Global 20-Second Top Ad Progress Line (Highest Z-Index above all screens/modals) */}
+      {sponsorLoading && (
+        <>
+          <div className="fixed top-0 left-0 right-0 h-1.5 z-[9999] bg-black/45 pointer-events-none">
+            <div
+              className="h-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 shadow-[0_0_12px_rgba(251,191,36,0.9)] transition-[width] duration-75 ease-linear"
+              style={{ width: `${sponsorLoading.progress}%` }}
+            />
+          </div>
+          <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-[9999] pointer-events-none inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#09090b]/95 border border-amber-400/55 text-[11px] font-bold text-amber-200 shadow-[0_6px_24px_rgba(0,0,0,0.85)] backdrop-blur-md whitespace-nowrap">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0" />
+            <span>Sponsor Active</span>
+            <span className="font-mono-num text-amber-300">{sponsorLoading.secondsLeft}s</span>
+          </div>
+        </>
+      )}
+
       <TopHeader
         coins={currentPlayer.coins}
         sundayBonusZar={sundayBonusZar}
         muted={muted}
-        onOpenGiftVault={() => setGiftVaultModalOpen(true)}
+        onOpenGiftVault={handleOpenGiftVaultFromHeader}
         onToggleMute={handleToggleMute}
         onOpenAdmin={navigateToAdmin}
       />
@@ -1671,8 +1429,10 @@ function DramaWinApp() {
             playerTotalCoins={currentPlayer.coins}
             qualificationThreshold={qualificationThreshold}
             muted={muted}
+            resumePlaybackSignal={resumePlaybackSignal}
             onToggleMute={handleToggleMute}
             onAwardCoinPot={handleAwardCoinPot}
+            onStartSponsorReward={startSponsorRewardFlow}
             onClaimHeroBonus={handleClaimHeroBonus}
             onMarkEpisodeWatched={handleMarkEpisodeWatched}
           />
@@ -1688,10 +1448,12 @@ function DramaWinApp() {
             playerTotalCoins={currentPlayer.coins}
             qualificationThreshold={qualificationThreshold}
             muted={muted}
+            resumePlaybackSignal={resumePlaybackSignal}
             onToggleMute={handleToggleMute}
             onToggleMyList={handleToggleMyList}
             onShareEpisode={handleShareEpisode}
             onAwardCoinPot={handleAwardCoinPot}
+            onStartSponsorReward={startSponsorRewardFlow}
             onMarkEpisodeWatched={handleMarkEpisodeWatched}
             onSwitchToHome={() => setActiveTab('watch')}
           />
@@ -1703,6 +1465,7 @@ function DramaWinApp() {
             sponsorAdUrl={appConfig.sponsorAdUrl}
             openedBoxesOverride={isCloudMode ? cloudOpenedBoxes : undefined}
             mysteryReveal={mysteryReveal}
+            pendingGiftBox={pendingGiftBox}
             voucherModal={mysteryVoucherModal}
             players={leaderboard}
             currentUserId={currentPlayer.uid}
@@ -1715,6 +1478,7 @@ function DramaWinApp() {
             transactions={transactions}
             onSundayZeroTick={handleSundayZeroTick}
             onCompleteCheckIn={handleCompleteDailyCheckIn}
+            onStartSponsorReward={startSponsorRewardFlow}
             onOpenMysteryBox={handleOpenMysteryBox}
             onDismissVoucherModal={() => setMysteryVoucherModal(null)}
           />
@@ -1778,6 +1542,7 @@ function DramaWinApp() {
               privateState={privateProfile}
               openedBoxesOverride={isCloudMode ? cloudOpenedBoxes : undefined}
               mysteryReveal={mysteryReveal}
+              pendingGiftBox={pendingGiftBox}
               voucherModal={mysteryVoucherModal}
               onOpenMysteryBox={handleOpenMysteryBox}
               onDismissVoucherModal={() => setMysteryVoucherModal(null)}
@@ -1792,7 +1557,9 @@ function DramaWinApp() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <DramaWinApp />
+      <CatalogProvider>
+        <DramaWinApp />
+      </CatalogProvider>
     </ErrorBoundary>
   );
 }

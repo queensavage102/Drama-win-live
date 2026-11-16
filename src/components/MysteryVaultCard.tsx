@@ -6,7 +6,7 @@ import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 export interface BoxOutcome {
   boxNumber: number;
-  kind: 'airtime' | 'coins' | 'jackpot';
+  kind: 'airtime' | 'coins' | 'jackpot' | 'oops';
   coins: number;
   voucherCode?: string;
 }
@@ -14,7 +14,7 @@ export interface BoxOutcome {
 export interface MysteryRevealState {
   dateKey: string;
   boxNumber: number;
-  kind: 'airtime' | 'coins' | 'jackpot';
+  kind: 'airtime' | 'coins' | 'jackpot' | 'oops';
   coins?: number;
   winnerRecord?: MysteryWinnerRecord;
   newPoolPrizeZar?: number;
@@ -25,6 +25,10 @@ interface MysteryVaultCardProps {
   todayKey: string;
   openedBoxesOverride?: number[];
   mysteryReveal: MysteryRevealState | null;
+  pendingGiftBox?: {
+    boxNumber: number;
+    secondsLeft: number;
+  } | null;
   voucherModal: {
     winner: MysteryWinnerRecord;
     newPoolPrizeZar?: number;
@@ -150,6 +154,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
   privateState,
   openedBoxesOverride,
   mysteryReveal,
+  pendingGiftBox = null,
   voucherModal,
   highlightVault = false,
   onOpenMysteryBox,
@@ -224,14 +229,34 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
           </div>
         </div>
 
-        {/* Result Banner for latest opened regular, 11th-box jackpot, or winning box */}
-        {activeRevealForToday && (
+        {/* Pending 20-Second Sponsor Ad Banner (Shown BEFORE outcome resolves) */}
+        {pendingGiftBox && (
+          <div
+            role="status"
+            className="relative rounded-xl px-4 py-3 border border-amber-400/65 bg-gradient-to-r from-[#2A200A] via-[#17130A] to-[#2A200A] text-[#FCE7A2] flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm shadow-[0_0_24px_rgba(251,191,36,0.25)]"
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+              <span className="font-bold">
+                Sponsor Ad Active — Unlocking Gift Box #{pendingGiftBox.boxNumber}...
+              </span>
+            </div>
+            <span className="font-mono-num font-extrabold bg-black/60 text-amber-300 px-3 py-1 rounded-full border border-amber-400/45">
+              {pendingGiftBox.secondsLeft}s remaining
+            </span>
+          </div>
+        )}
+
+        {/* Result Banner for latest opened box (Resolved ONLY after 20-second ad timer completes) */}
+        {!pendingGiftBox && activeRevealForToday && (
           <div
             role="status"
             className={`relative rounded-xl px-4 py-3 border flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm ${
               activeRevealForToday.kind === 'airtime' || activeRevealForToday.kind === 'jackpot'
                 ? 'gold-gradient-bg border-[#FFF2C2] text-[#181307] font-bold shadow-lg shadow-[#D4AF37]/30'
-                : 'bg-[#17130A] border-[#D4AF37]/45 text-[#FCE7A2]'
+                : activeRevealForToday.kind === 'oops'
+                  ? 'bg-[#18141C] border-white/20 text-zinc-200'
+                  : 'bg-[#17130A] border-[#D4AF37]/45 text-[#FCE7A2]'
             }`}
           >
             {activeRevealForToday.kind === 'airtime' ? (
@@ -245,12 +270,19 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                   🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁
                 </span>
               </div>
+            ) : activeRevealForToday.kind === 'oops' ? (
+              <div className="flex items-center gap-2.5">
+                <span className="text-lg shrink-0">🎁</span>
+                <span className="font-semibold">
+                  Oops, sorry try next box 🥲 (Box #{activeRevealForToday.boxNumber})
+                </span>
+              </div>
             ) : (
               <>
                 <div className="flex items-center gap-2.5">
                   <RealisticGoldCoin sizePx={48} emblem="$" className="shrink-0" />
                   <span className="font-semibold">
-                    Oops! Sorry, try the next box 😢
+                    🎁 Gift Box #{activeRevealForToday.boxNumber} Unlocked! Keep opening boxes for the Jackpot!
                   </span>
                 </div>
                 {activeRevealForToday.coins ? (
@@ -268,25 +300,30 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
           {Array.from({ length: 12 }, (_, idx) => {
             const boxNumber = idx + 1;
             const isOpenedToday = openedTodayList.includes(boxNumber);
+            const isPendingBox = pendingGiftBox?.boxNumber === boxNumber;
             const isLatestPicked = activeRevealForToday?.boxNumber === boxNumber;
             const isWonR5 = isLatestPicked && activeRevealForToday?.kind === 'airtime';
             const isWonJackpot = isLatestPicked && activeRevealForToday?.kind === 'jackpot';
+            const isOopsLatest = isLatestPicked && activeRevealForToday?.kind === 'oops';
             const isWinningTile = isWonR5 || isWonJackpot;
-            const isInteractive = !isOpenedToday && activeRevealForToday?.kind !== 'jackpot';
+            const isInteractive =
+              !pendingGiftBox && !isOpenedToday && activeRevealForToday?.kind !== 'jackpot';
             const shimmerDelay = `${(idx % 4) * 0.45}s`;
 
             const boxClasses = `group relative min-h-[118px] sm:min-h-[132px] rounded-2xl border p-2.5 sm:p-3 flex flex-col items-center justify-center gap-1.5 overflow-hidden transition-all duration-300 ${
-              isOpenedToday
-                ? isWinningTile
-                  ? 'bg-gradient-to-b from-[#45330E] via-[#241A07] to-[#0D0A04] border-[#FFF5C8] shadow-[0_0_34px_rgba(252,231,162,0.55),inset_0_1px_0_rgba(255,250,224,0.7)]'
-                  : 'bg-gradient-to-b from-[#1A160D] via-[#100E09] to-[#08080A] border-[#D4AF37]/30 opacity-80 cursor-not-allowed'
-                : isInteractive
-                  ? `bg-gradient-to-b from-[#251E0D] via-[#131009] to-[#070708] hover:border-[#FFF0B8] hover:-translate-y-0.5 hover:scale-[1.03] active:scale-[0.97] cursor-pointer ${
-                      highlightVault
-                        ? 'border-[#FFF0B8] ring-2 ring-[#FCE7A2]/85 mystery-vault-highlight'
-                        : 'border-[#D4AF37]/65 shadow-[0_0_24px_rgba(212,175,55,0.22),inset_0_1px_0_rgba(252,231,162,0.45)] hover:shadow-[0_0_34px_rgba(252,231,162,0.42),inset_0_1px_0_rgba(255,248,220,0.7)]'
-                    }`
-                  : 'bg-gradient-to-b from-[#1A160D] via-[#100E09] to-[#08080A] border-[#D4AF37]/30 opacity-65 cursor-not-allowed'
+              isPendingBox
+                ? 'bg-gradient-to-b from-[#3A2D0E] via-[#1C1608] to-[#08080A] border-amber-300 ring-2 ring-amber-300/70 shadow-[0_0_28px_rgba(251,191,36,0.45)] cursor-wait'
+                : isOpenedToday
+                  ? isWinningTile
+                    ? 'bg-gradient-to-b from-[#45330E] via-[#241A07] to-[#0D0A04] border-[#FFF5C8] shadow-[0_0_34px_rgba(252,231,162,0.55),inset_0_1px_0_rgba(255,250,224,0.7)]'
+                    : 'bg-gradient-to-b from-[#1A160D] via-[#100E09] to-[#08080A] border-[#D4AF37]/30 opacity-80 cursor-not-allowed'
+                  : isInteractive
+                    ? `bg-gradient-to-b from-[#251E0D] via-[#131009] to-[#070708] hover:border-[#FFF0B8] hover:-translate-y-0.5 hover:scale-[1.03] active:scale-[0.97] cursor-pointer ${
+                        highlightVault
+                          ? 'border-[#FFF0B8] ring-2 ring-[#FCE7A2]/85 mystery-vault-highlight'
+                          : 'border-[#D4AF37]/65 shadow-[0_0_24px_rgba(212,175,55,0.22),inset_0_1px_0_rgba(252,231,162,0.45)] hover:shadow-[0_0_34px_rgba(252,231,162,0.42),inset_0_1px_0_rgba(255,248,220,0.7)]'
+                      }`
+                    : 'bg-gradient-to-b from-[#1A160D] via-[#100E09] to-[#08080A] border-[#D4AF37]/30 opacity-65 cursor-not-allowed'
             }`;
 
             const innerContent = (
@@ -320,7 +357,19 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                   className="pointer-events-none absolute bottom-2 right-2 w-2 h-2 border-b border-r border-[#FCE7A2]/45 rounded-br-[2px]"
                 />
 
-                {isOpenedToday ? (
+                {isPendingBox ? (
+                  <div className="relative z-10 flex flex-col items-center justify-center gap-1.5 text-center px-1">
+                    <div className="animate-pulse">
+                      <Gold3DGiftIcon unlocked className="w-10 h-10 sm:w-12 sm:h-12" />
+                    </div>
+                    <span className="font-mono-num px-2 py-0.5 rounded-full bg-amber-400 text-zinc-950 text-[10px] font-black leading-tight">
+                      {pendingGiftBox.secondsLeft}s
+                    </span>
+                    <span className="font-mono-num text-[11px] font-bold text-[#FCE7A2]">
+                      #{boxNumber}
+                    </span>
+                  </div>
+                ) : isOpenedToday ? (
                   <div className="relative z-10 flex flex-col items-center justify-center gap-1.5 text-center px-1">
                     {isWonR5 ? (
                       <>
@@ -340,13 +389,22 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                           +1,000 Coins!
                         </span>
                       </>
+                    ) : isOopsLatest ? (
+                      <>
+                        <div className="w-9 h-9 rounded-full bg-[#241E11] border border-white/15 text-zinc-300 flex items-center justify-center text-base">
+                          🥲
+                        </div>
+                        <span className="text-[10px] font-semibold text-zinc-400 leading-tight">
+                          Next Box
+                        </span>
+                      </>
                     ) : (
                       <>
-                        <div className="w-9 h-9 rounded-full bg-[#241E11] border border-[#D4AF37]/40 text-[#E8C96D] flex items-center justify-center text-base">
-                          😢
+                        <div className="w-9 h-9 rounded-full bg-[#241E11] border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center text-base">
+                          🎁
                         </div>
-                        <span className="text-[10px] font-semibold text-[#C4BDB0] leading-tight">
-                          Opened
+                        <span className="text-[10px] font-semibold text-[#FCE7A2] leading-tight">
+                          Claimed
                         </span>
                       </>
                     )}

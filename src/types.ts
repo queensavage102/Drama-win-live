@@ -76,6 +76,7 @@ export interface DramaEpisode {
   isPublic: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
+  updatedAtMs?: number;
 }
 
 export interface AppConfig {

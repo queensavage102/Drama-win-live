@@ -21,6 +21,7 @@ import {
 } from '../constants';
 import { DramaEpisode } from '../types';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
+import { BottomAdBanner } from './BottomAdBanner';
 import { DoubleRewardModal } from './DoubleRewardModal';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
@@ -31,8 +32,10 @@ interface EpisodeWatchScreenProps {
   playerTotalCoins: number;
   qualificationThreshold: number;
   muted: boolean;
+  resumePlaybackSignal?: number;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
+  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
   onClose: () => void;
 }
@@ -50,7 +53,6 @@ const TreasureCoinPot3D: React.FC<{ ringProgress: number; pulsing: boolean }> = 
         pulsing ? 'scale-115' : 'scale-100 coin-pot-glow'
       }`}
     >
-      {/* Realistic 3D gold coins visibly dropping into & overflowing the brushed gold cauldron pot */}
       <svg
         viewBox="0 0 64 64"
         className="w-14 h-14 overflow-visible drop-shadow-[0_6px_14px_rgba(212,175,55,0.72)]"
@@ -78,7 +80,6 @@ const TreasureCoinPot3D: React.FC<{ ringProgress: number; pulsing: boolean }> = 
           </radialGradient>
         </defs>
 
-        {/* Dropping Coin #1 (milled rim + embossed $) */}
         <g
           className="coin-drop-sparkle"
           style={{
@@ -92,7 +93,6 @@ const TreasureCoinPot3D: React.FC<{ ringProgress: number; pulsing: boolean }> = 
           <text x="22" y="12.2" textAnchor="middle" fontSize="6.5" fontWeight="900" fill="#FFFDF0">$</text>
         </g>
 
-        {/* Dropping Coin #2 (milled rim + embossed ★) */}
         <g
           className="coin-drop-sparkle"
           style={{
@@ -107,7 +107,6 @@ const TreasureCoinPot3D: React.FC<{ ringProgress: number; pulsing: boolean }> = 
           <text x="42" y="11" textAnchor="middle" fontSize="5.8" fontWeight="900" fill="#FFFDF0">★</text>
         </g>
 
-        {/* Overflowing heap of realistic milled gold coins inside the pot rim */}
         <g stroke="#6D4804" strokeWidth="0.9">
           <circle cx="20" cy="24.5" r="6.2" fill="url(#coinSparkleFace)" />
           <circle cx="44" cy="24.5" r="6.2" fill="url(#coinSparkleFace)" />
@@ -118,18 +117,15 @@ const TreasureCoinPot3D: React.FC<{ ringProgress: number; pulsing: boolean }> = 
         <circle cx="32" cy="20.5" r="5" fill="none" stroke="#7A5105" strokeWidth="0.9" strokeDasharray="1.3 1.4" />
         <text x="32" y="23" textAnchor="middle" fontSize="7" fontWeight="900" fill="#FFFDF0">$</text>
 
-        {/* Glints on coin heap */}
         <path d="M31 12.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1z" fill="#FFFFFF" />
         <path d="M46 15l0.8 1.6 1.6 0.8-1.6 0.8-0.8 1.6-0.8-1.6-1.6-0.8 1.6-0.8z" fill="#FFF7D0" />
 
-        {/* 3D Brushed Gold Cauldron Pot Body */}
         <path
           d="M14 28.5 C10.5 44, 17 57.5, 32 57.5 C47 57.5, 53.5 44, 50 28.5 Z"
           fill="url(#potGoldBody)"
           stroke="#FCE7A2"
           strokeWidth="1.3"
         />
-        {/* Specular highlight curve on pot belly */}
         <path
           d="M19.5 34 C17.5 42, 20.5 49.5, 25.5 52.5"
           fill="none"
@@ -138,11 +134,9 @@ const TreasureCoinPot3D: React.FC<{ ringProgress: number; pulsing: boolean }> = 
           strokeLinecap="round"
         />
 
-        {/* Metallic Rim Collar */}
         <ellipse cx="32" cy="28.5" rx="19" ry="4.8" fill="url(#potGoldRim)" stroke="#5D3E03" strokeWidth="1.2" />
         <ellipse cx="32" cy="27.8" rx="15" ry="2.4" fill="rgba(40,26,4,0.45)" />
 
-        {/* Embossed Currency Relief on Pot Belly */}
         <text
           x="32.7"
           y="48"
@@ -195,11 +189,16 @@ const WatchVideoStage: React.FC<{
   episode: DramaEpisode;
   zoomed: boolean;
   paused: boolean;
+  resumePlaybackSignal: number;
   onPlayingChange?: (playing: boolean) => void;
   onVideoEnded?: () => void;
-}> = ({ episode, zoomed, paused, onPlayingChange, onVideoEnded }) => {
+}> = ({ episode, zoomed, paused, resumePlaybackSignal, onPlayingChange, onVideoEnded }) => {
   const rawVideoUrl = sanitizeMediaUrl((episode.videoUrl || episode.youtubeUrl || '').trim());
-  const embedUrl = rawVideoUrl ? getYouTubeEmbedUrl(rawVideoUrl) : null;
+  const customStart =
+    typeof episode.startTime === 'number' && Number.isFinite(episode.startTime)
+      ? Math.max(0, Math.floor(episode.startTime))
+      : undefined;
+  const embedUrl = rawVideoUrl ? getYouTubeEmbedUrl(rawVideoUrl, customStart) : null;
   const bareYouTubeDomain = rawVideoUrl ? isYouTubeDomainOnly(rawVideoUrl) : false;
   const resolvedMediaUrl = useResolvedMediaUrl(embedUrl || bareYouTubeDomain ? '' : rawVideoUrl);
 
@@ -227,7 +226,7 @@ const WatchVideoStage: React.FC<{
         void videoRef.current.play().catch(() => {});
       }
     }
-  }, [paused, embedUrl, resolvedMediaUrl]);
+  }, [paused, resumePlaybackSignal, embedUrl, resolvedMediaUrl]);
 
   useEffect(() => {
     if (!embedUrl && !resolvedMediaUrl) return;
@@ -297,7 +296,7 @@ const WatchVideoStage: React.FC<{
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
         allowFullScreen
         className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
-          zoomed ? 'object-cover scale-[1.8]' : 'object-contain scale-100'
+          zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
         }`}
       />
     );
@@ -320,7 +319,7 @@ const WatchVideoStage: React.FC<{
             onVideoEndedRef.current?.();
           }}
           className={`absolute inset-0 w-full h-full bg-black transition-transform duration-300 ease-out origin-center ${
-            zoomed ? 'object-cover scale-[1.8]' : 'object-contain scale-100'
+            zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
           }`}
         />
       );
@@ -343,7 +342,7 @@ const WatchVideoStage: React.FC<{
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
         allowFullScreen
         className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
-          zoomed ? 'object-cover scale-[1.8]' : 'object-contain scale-100'
+          zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
         }`}
       />
     );
@@ -368,8 +367,10 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   playerTotalCoins,
   qualificationThreshold,
   muted,
+  resumePlaybackSignal = 0,
   onToggleMute,
   onAwardCoinPot,
+  onStartSponsorReward,
   onMarkEpisodeWatched,
   onClose,
 }) => {
@@ -399,6 +400,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     isVideoPlayingRef.current = true;
     rewardModalOpenRef.current = false;
     setRewardModalOpen(false);
+    setRingProgress(0);
     setIsZoomed(true);
   }, [episode]);
 
@@ -423,7 +425,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     };
   }, []);
 
-  // Fills Coin Ring up to 100%, pauses video, and opens the +300 / +600 Congratulations modal
+  // Fills Coin Ring up to 100% every 60s of playback, pauses video, and opens Congratulations modal
   useEffect(() => {
     const cycleMs = COIN_POT_CYCLE_SECONDS * 1000;
     let elapsedMs = 0;
@@ -490,7 +492,6 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       awardingRef.current = false;
     }
   };
-  
 
   const handleClose = () => {
     try {
@@ -534,7 +535,6 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     }
   };
 
-  // Exact Top Progress Bar Math: (currentCoins / 500000) * 100 — starts strictly at 0%
   const safeTarget = Math.max(500000, qualificationThreshold || 500000);
   const exactPct = Math.min(100, Math.max(0, (playerWeeklyCoins / safeTarget) * 100));
   const formattedPct =
@@ -546,7 +546,6 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
           ? `${exactPct.toFixed(2)}%`
           : `${exactPct.toFixed(1)}%`;
 
-  // Coin Pot SVG Ring Geometry
   const potSize = 88;
   const strokeWidth = 5;
   const radius = (potSize - strokeWidth) / 2;
@@ -558,14 +557,14 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       role="dialog"
       aria-modal="true"
       aria-label={episode.title}
-      className="fixed inset-0 z-[75] bg-black flex items-center justify-center p-0 m-0"
+      className="fixed inset-0 z-[75] bg-[#09090b] flex items-center justify-center p-0 m-0"
     >
       <div
         ref={playerContainerRef}
-        className="flex flex-col w-full h-[100dvh] bg-[#070709] overflow-hidden"
+        className="h-screen h-[100dvh] w-full flex flex-col bg-[#09090b] overflow-hidden"
       >
-        {/* Top Episode Title Bar + Sound Toggle + Sunday Tournament Progress Bar */}
-        <header className="flex-none bg-[#09090D] border-b border-[#D4AF37]/25 px-3 sm:px-5 pt-2 pb-2 space-y-1.5">
+        {/* Top Episode Title Bar + Controls + Sunday Tournament Progress Bar */}
+        <header className="flex-none bg-[#09090b] border-b border-[#D4AF37]/25 px-3 sm:px-5 pt-2 pb-2 space-y-1.5 z-30">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-[11px] text-[#E8C96D] font-medium truncate">
@@ -597,7 +596,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                 onClick={() => setIsZoomed((prev) => !prev)}
                 aria-pressed={isZoomed}
                 aria-label={isZoomed ? 'Zoomed full-screen — tap to switch to Fit' : 'Standard Fit — tap to Zoom'}
-                title={isZoomed ? 'Zoomed (1.8x) — tap for Fit' : 'Fit — tap for Zoom'}
+                title={isZoomed ? 'Zoomed (1.95x) — tap for Fit' : 'Fit — tap for Zoom'}
                 className={`min-h-[38px] px-2.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
                   isZoomed
                     ? 'border-[#D4AF37]/45 bg-[#17130A] text-[#FCE7A2]'
@@ -648,7 +647,6 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             </div>
           </div>
 
-          {/* Sunday Tournament Progress Bar: strict (currentCoins / 500000) * 100 starting at 0% */}
           <div
             className={`rounded-xl bg-[#0D0D13] border px-3 py-1.5 space-y-1 transition-all duration-300 ${
               barPulse
@@ -691,12 +689,13 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
           </div>
         </header>
 
-        {/* Center Full-Screen Video Stage (100% Width & Height between top bar & bottom ad banner) */}
-        <div className="relative flex-1 min-h-0 w-full bg-black overflow-hidden">
+        {/* Upper Video Container */}
+        <div className="flex-1 min-h-0 relative w-full bg-[#09090b] overflow-hidden">
           <WatchVideoStage
             episode={episode}
             zoomed={isZoomed}
             paused={rewardModalOpen}
+            resumePlaybackSignal={resumePlaybackSignal}
             onPlayingChange={(playing) => {
               if (!rewardModalOpenRef.current) {
                 isVideoPlayingRef.current = playing;
@@ -707,10 +706,23 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             }}
           />
 
-          {/* Floating 3D Golden Treasure Coin Pot Widget (top-right at ~18%, scaled down out of center view) */}
-                <div className="pointer-events-auto absolute right-2 sm:right-4 top-[18%] z-20 flex flex-col items-center">
-                  
-          
+          {/* Bottom gradient overlay hiding YouTube's bottom watermark/logo + displaying episode title */}
+          <div
+            aria-hidden="true"
+            className="absolute bottom-0 inset-x-0 h-16 bg-gradient-to-t from-[#09090b] via-[#09090b]/95 to-transparent pointer-events-none z-20 flex items-end px-4 pb-2.5"
+          >
+            <div className="min-w-0">
+              <p className="text-[11px] font-mono-num font-semibold text-amber-300/95 truncate">
+                {episode.series} · {episode.episodeLabel}
+              </p>
+              <p className="text-xs sm:text-sm font-display font-bold text-[#F6F2E9] truncate">
+                {episode.title}
+              </p>
+            </div>
+          </div>
+
+          {/* Floating 3D Golden Treasure Coin Pot Widget */}
+          <div className="pointer-events-auto absolute right-2 sm:right-4 top-[18%] z-30 flex flex-col items-center">
             {flyingBurst && (
               <div
                 key={flyingBurst.id}
@@ -725,7 +737,6 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             )}
 
             <div className="relative w-[88px] h-[88px] rounded-full bg-[#0D0A05]/92 backdrop-blur-md border border-[#FCE7A2]/45 shadow-[0_10px_32px_rgba(0,0,0,0.8)] flex items-center justify-center">
-              {/* Orbiting accent 48px photorealistic gold coin at the top-left edge of the Coin Pot */}
               <div className="absolute -top-5 -left-5 pointer-events-none">
                 <RealisticGoldCoin sizePx={48} emblem="★" />
               </div>
@@ -768,18 +779,26 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
               <TreasureCoinPot3D ringProgress={ringProgress} pulsing={barPulse} />
             </div>
+
             <span className="mt-1 px-2.5 py-0.5 rounded-full bg-black/85 border border-[#D4AF37]/55 font-mono-num text-[11px] font-bold text-[#FCE7A2]">
               +{potReward}
             </span>
           </div>
         </div>
+
+        {/* Dedicated Bottom Banner Footer cleanly beneath the video frame */}
+        <footer className="h-[62px] shrink-0 w-full bg-[#09090b] border-t border-white/10 flex items-center justify-center z-30">
+          <BottomAdBanner />
+        </footer>
       </div>
 
+      {/* Celebratory Coin Ring Complete (+300 / AD Double Rewards x2 +600) Modal */}
       <DoubleRewardModal
         open={rewardModalOpen}
         baseCoins={potReward}
         sponsorUrl={episode.sponsorUrl || sponsorAdUrl || DEFAULT_SPONSOR_URL}
         episodeTitle={`${episode.series} — ${episode.episodeLabel}`}
+        onStartSponsorTimer={() => onStartSponsorReward?.()}
         onClaimDouble={() => handleClaimPotReward(potReward * 2)}
         onClaimBase={() => handleClaimPotReward(potReward)}
       />

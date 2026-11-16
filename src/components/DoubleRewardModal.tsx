@@ -7,6 +7,7 @@ interface DoubleRewardModalProps {
   baseCoins?: number;
   sponsorUrl?: string;
   episodeTitle?: string;
+  onStartSponsorTimer?: () => void;
   onClaimDouble: () => Promise<void>;
   onClaimBase: () => Promise<void>;
 }
@@ -126,6 +127,7 @@ export const DoubleRewardModal: React.FC<DoubleRewardModalProps> = ({
   baseCoins = COIN_POT_BASE_REWARD,
   sponsorUrl,
   episodeTitle,
+  onStartSponsorTimer,
   onClaimDouble,
   onClaimBase,
 }) => {
@@ -139,6 +141,7 @@ export const DoubleRewardModal: React.FC<DoubleRewardModalProps> = ({
     if (submitting) return;
     // Open direct link synchronously on tap so mobile browsers allow it cleanly
     window.open(DEFAULT_SPONSOR_URL, '_blank');
+    onStartSponsorTimer?.();
     setSubmitting('double');
     try {
       await onClaimDouble();

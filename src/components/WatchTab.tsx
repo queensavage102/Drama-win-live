@@ -11,8 +11,10 @@ interface WatchTabProps {
   playerTotalCoins: number;
   qualificationThreshold: number;
   muted: boolean;
+  resumePlaybackSignal?: number;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
+  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
   onClaimHeroBonus?: () => Promise<void>;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
 }
@@ -26,8 +28,10 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   playerTotalCoins,
   qualificationThreshold,
   muted,
+  resumePlaybackSignal,
   onToggleMute,
   onAwardCoinPot,
+  onStartSponsorReward,
   onClaimHeroBonus,
   onMarkEpisodeWatched,
 }) => {
@@ -41,8 +45,10 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       playerTotalCoins={playerTotalCoins}
       qualificationThreshold={qualificationThreshold}
       muted={muted}
+      resumePlaybackSignal={resumePlaybackSignal}
       onToggleMute={onToggleMute}
       onAwardCoinPot={onAwardCoinPot}
+      onStartSponsorReward={onStartSponsorReward}
       onClaimHeroBonus={onClaimHeroBonus}
       onMarkEpisodeWatched={onMarkEpisodeWatched}
     />
