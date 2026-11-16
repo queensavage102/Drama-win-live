@@ -218,4 +218,9 @@
 ::-webkit-scrollbar-thumb {
   background: rgba(212, 175, 55, 0.25);
   border-radius: 9999px;
+}/* Keep top 14px open for the filling sponsor progress bar above injected top notifications */
+body > div[style*="position: fixed"][style*="top: 0"],
+body > iframe[style*="position: fixed"][style*="top: 0"] {
+  top: 14px !important;
 }
+
