@@ -401,10 +401,10 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                     ) : (
                       <>
                         <div className="w-9 h-9 rounded-full bg-[#241E11] border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center text-base">
-                          🎁
+                          🥲
                         </div>
                         <span className="text-[10px] font-semibold text-[#FCE7A2] leading-tight">
-                          Claimed
+                          Empty
                         </span>
                       </>
                     )}
