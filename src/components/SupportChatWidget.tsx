@@ -694,5 +694,3 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     </>
      );
 };
-
-};
