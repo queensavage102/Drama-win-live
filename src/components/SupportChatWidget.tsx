@@ -7,21 +7,21 @@ import {
   Mail,
   MessageSquareHeart,
   Send,
-  ShieldCheck,
   Sparkles,
+  Trash2,
   X,
 } from 'lucide-react';
-import {
-  ADMIN_NOTIFICATION_EMAIL,
-  R3_BOOST_ZAR,
-  R3_MYSTERY_CYCLE_ADS,
-} from '../constants';
+import { R3_BOOST_ZAR, R3_MYSTERY_CYCLE_ADS } from '../constants';
 import { SupportCategory } from '../types';
+
+const WEB3FORMS_ACCESS_KEY = '1cf6a6bd-bbe1-44ae-94ca-5ee93136033e';
+const CHAT_STORAGE_KEY = 'dramawin_support_chat_v1';
 
 interface ChatMessageItem {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  action?: 'open_ticket';
 }
 
 export interface SupportTicketSubmissionInput {
@@ -47,28 +47,23 @@ interface SupportChatWidgetProps {
   ) => Promise<{ id: string; syncedToCloud: boolean }>;
 }
 
-const INITIAL_BOT_MESSAGE: ChatMessageItem = {
-  id: 'welcome-bot',
-  role: 'assistant',
-  text: `Welcome to DramaWin VIP Support! Ask me about earning Coins, the ${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Mystery Box Boost & auto-reset cycle, or Sunday R${50}+ Pool payouts — or switch to "Message Admin / Claim Prize Help" to send a direct ticket.`,
-};
-
 const QUICK_PROMPTS = [
-  `How does the ${R3_MYSTERY_CYCLE_ADS}-ad R${R3_BOOST_ZAR} boost work?`,
-  'How do I earn coins fastest?',
-  'When are Sunday Pool payouts?',
+  'How do I earn coins fast?',
+  `How does the R${R3_BOOST_ZAR} Boost work?`,
+  'Am I qualified for Sunday Pool?',
+  'Missing coins / prize help',
 ];
 
 const SUPPORT_CATEGORY_OPTIONS: { value: SupportCategory; label: string }[] = [
-  { value: 'claim_prize', label: 'Claim Prize Help / Payout' },
+  { value: 'claim_prize', label: 'Claim Prize / Payout' },
   { value: 'mystery_box', label: `${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Mystery Box` },
   { value: 'coins', label: 'Coins & Daily Streak' },
   { value: 'sunday_pool', label: 'Sunday Pool & Leaderboard' },
-  { value: 'feedback', label: 'Feedback & Suggestions' },
+  { value: 'feedback', label: 'Complaint / Feedback' },
   { value: 'other', label: 'Other Support' },
 ];
 
-function buildFallbackSupportReply(
+function buildConversationalReply(
   question: string,
   ctx: {
     username: string;
@@ -77,10 +72,55 @@ function buildFallbackSupportReply(
     qualificationThreshold: number;
     poolPrizeZar: number;
   }
-): string {
-  const q = question.toLowerCase();
+): { text: string; action?: 'open_ticket' } {
+  const q = question.toLowerCase().trim();
+  const firstName =
+    ctx.username && ctx.username !== 'Player' ? ctx.username.split(' ') : 'friend';
   const safeThreshold = Math.max(1, ctx.qualificationThreshold || 500000);
-  const remainingWeekly = Math.max(0, safeThreshold - (ctx.weeklyCoins || 0));
+  const currentWeekly = ctx.weeklyCoins || 0;
+  const remainingWeekly = Math.max(0, safeThreshold - currentWeekly);
+  const progressPct = Math.min(100, Math.round((currentWeekly / safeThreshold) * 100));
+
+  if (/\b(thank|thanks|thx|appreciate|awesome|cool|sharp|shot|perfect|nice)\b/.test(q)) {
+    return {
+      text: `You're welcome, ${firstName}! Enjoy watching and stacking those coins. Shout anytime if you need anything else!`,
+    };
+  }
+
+  if (q.includes('how are you') || q.includes('howzit') || q.includes("what's up") || q.includes('wassup')) {
+    return {
+      text: `Doing great, ${firstName}! I see you've got ${ctx.coins.toLocaleString()} Coins in your wallet right now. Want tips on boosting your balance or checking your Sunday Pool progress?`,
+    };
+  }
+
+  if (/^(hi|hello|hey|yo|ekse|heita|hola|good morning|good afternoon|good evening)\b/.test(q)) {
+    return {
+      text: `Hey ${firstName}! Welcome to DramaWin VIP Support. You currently have ${ctx.coins.toLocaleString()} Coins—what can I help you with today?`,
+    };
+  }
+
+  if (
+    q.includes('missing') ||
+    q.includes("didn't get") ||
+    q.includes('did not get') ||
+    q.includes('not working') ||
+    q.includes('stuck') ||
+    q.includes('bug') ||
+    q.includes('error') ||
+    q.includes('issue') ||
+    q.includes('problem') ||
+    q.includes('complaint') ||
+    q.includes('lost') ||
+    q.includes('scam') ||
+    q.includes('admin') ||
+    q.includes('human') ||
+    q.includes('person')
+  ) {
+    return {
+      text: `I'm sorry you're running into trouble, ${firstName}! Let's get that sorted out for you right away. Tap the button below to send a direct note to our admin team with your coin balance attached so we can fix it manually.`,
+      action: 'open_ticket',
+    };
+  }
 
   if (
     q.includes('11') ||
@@ -91,7 +131,9 @@ function buildFallbackSupportReply(
     q.includes('vault') ||
     q.includes('reset')
   ) {
-    return `Here is how the ${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Mystery Box Boost works:\n\n• Open the Secret Mystery Vault (Rewards tab or top-right Gift icon) and tap any glowing box (#1–#12).\n• Watch the full 20-second sponsor ad inside the modal to unlock that box (+100 Bonus Coins, or an occasional "Oops, try next box"). Closing the modal early cancels the timer and reward.\n• When you finish all ${R3_MYSTERY_CYCLE_ADS} video ads in a cycle, you unlock the R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Bonus Coins) added directly to your Wallet and Weekly Tournament goal.\n• Right after the ${R3_MYSTERY_CYCLE_ADS}th box, the grid automatically resets back to Box #1 so you can repeat the cycle immediately!`;
+    return {
+      text: `Here is how the Mystery Vault works, ${firstName}:\n\n1. Tap any glowing box and watch the full 20-second ad to grab +100 Coins.\n2. Every time you complete ${R3_MYSTERY_CYCLE_ADS} boxes, you unlock a massive +1,000 Coin R${R3_BOOST_ZAR} Boost!\n3. After Box #${R3_MYSTERY_CYCLE_ADS}, the grid automatically resets to Box #1 so you can repeat it as many times as you like.`,
+    };
   }
 
   if (
@@ -99,11 +141,14 @@ function buildFallbackSupportReply(
     q.includes('earn') ||
     q.includes('coin') ||
     q.includes('streak') ||
-    q.includes('check') ||
     q.includes('watch') ||
-    q.includes('pot')
+    q.includes('pot') ||
+    q.includes('how does this work') ||
+    q.includes('how do i play')
   ) {
-    return `Fastest ways to stack Coins on DramaWin (Wallet: ${ctx.coins.toLocaleString()} Coins | Weekly: ${ctx.weeklyCoins.toLocaleString()} / ${safeThreshold.toLocaleString()}):\n\n1. Watch Short Dramas: Play any episode for 30+ seconds to trigger the 60-second Coin Pot (+100 to +300 Coins per cycle).\n2. Repeat the ${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Mystery Vault: Earn +100 Bonus Coins per completed 20s box ad, plus +1,000 Bonus Coins on every ${R3_MYSTERY_CYCLE_ADS}th box (auto-resets to Box #1).\n3. Daily Check-In Streak (Mon–Sun): Visit the Rewards tab and tap Claim on today's card for +100 to +300 Coins, plus Featured Hero bonus claims.`;
+    return {
+      text: `You already have ${ctx.coins.toLocaleString()} Coins, ${firstName}! Here are the 3 best ways to stack more fast:\n\n• Watch Episodes: Stay on any drama for 30+ seconds to fill the 60s Coin Pot (+100 to +300 Coins).\n• Mystery Vault: Complete ${R3_MYSTERY_CYCLE_ADS} short box ads for +2,100 total Coins per cycle.\n• Daily Streak: Visit the Rewards tab once a day to claim your streak bonus.`,
+    };
   }
 
   if (
@@ -115,12 +160,31 @@ function buildFallbackSupportReply(
     q.includes('winner') ||
     q.includes('prize') ||
     q.includes('claim') ||
-    q.includes('r50')
+    q.includes('withdraw') ||
+    q.includes('cash') ||
+    q.includes('money')
   ) {
-    return `Sunday Prize Pool & Payout Rules (Current Pool: R${ctx.poolPrizeZar}):\n\n• Qualification Goal: Reach ${safeThreshold.toLocaleString()} Weekly Coins before Sunday 23:59 SAST (you currently have ${ctx.weeklyCoins.toLocaleString()} — ${remainingWeekly === 0 ? 'QUALIFIED!' : `${remainingWeekly.toLocaleString()} more needed`}).\n• Payout Split: When 3 or more players qualify by Sunday 23:59 SAST, the Top 3 split the pool: 50% (1st), 30% (2nd), and 20% (3rd).\n• Rollover Protection: If fewer than 3 players qualify, the pool rolls over (+R50 added for next week).\n• To claim a prize or voucher, tap "Message Admin / Claim Help" at the top of this chat.`;
+    const progressLine =
+      remainingWeekly === 0
+        ? `Great news—you've already hit ${currentWeekly.toLocaleString()} weekly coins and are 100% qualified!`
+        : `You're currently at ${progressPct}% (${currentWeekly.toLocaleString()} / ${safeThreshold.toLocaleString()} weekly coins), so you just need ${remainingWeekly.toLocaleString()} more weekly coins to qualify.`;
+
+    return {
+      text: `Every Sunday at 23:59 SAST, the R${ctx.poolPrizeZar} Sunday Pool is shared among the Top 3 qualified players (50% for 1st, 30% for 2nd, 20% for 3rd).\n\n${progressLine}`,
+    };
   }
 
-  return `Hi ${ctx.username || 'Player'}! Here is your quick DramaWin guide (Wallet: ${ctx.coins.toLocaleString()} Coins | Weekly Goal: ${ctx.weeklyCoins.toLocaleString()} / ${safeThreshold.toLocaleString()}):\n\n• ${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Boost: Open boxes #1–#12 in the Secret Mystery Vault and watch each full 20s ad. The ${R3_MYSTERY_CYCLE_ADS}th ad unlocks +1,000 Bonus Coins and auto-resets the grid back to Box #1.\n• Watch & Streak: Earn +100 to +300 Coins from the 60s Episode Coin Pot and Daily Check-In Streak.\n• Sunday Pool (R${ctx.poolPrizeZar}): Top 3 players with ${safeThreshold.toLocaleString()}+ weekly coins split the Sunday payout (50% / 30% / 20%).\n\nNeed direct payout or voucher help? Switch to the "Message Admin / Claim Help" tab right above!`;
+  if (q.includes('sound') || q.includes('volume') || q.includes('audio') || q.includes('mute') || q.includes('video')) {
+    return {
+      text: `If a drama has no sound, tap the speaker icon near the top of the video player to unmute it and check your phone's media volume. If the video still won't play, tap below to message our team!`,
+      action: 'open_ticket',
+    };
+  }
+
+  return {
+    text: `I want to make sure I give you the exact right answer, ${firstName}! I can help with earning coins, the ${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Boost, or Sunday Pool payouts—or if you'd rather chat with our team directly, tap below to send a quick message.`,
+    action: 'open_ticket',
+  };
 }
 
 export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
@@ -130,20 +194,37 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   weeklyCoins,
   qualificationThreshold,
   poolPrizeZar,
-  isFirebaseSignedIn,
   firebaseEmail = null,
-  onSignInGoogle,
   onSubmitSupportTicket,
 }) => {
   const [open, setOpen] = useState(false);
   const [activeMode, setActiveMode] = useState<'ai' | 'ticket'>('ai');
 
-  // AI chat state
-  const [messages, setMessages] = useState<ChatMessageItem[]>([INITIAL_BOT_MESSAGE]);
+  const getInitialMessage = (): ChatMessageItem => {
+    const firstName = username && username !== 'Player' ? username.split(' ') : 'there';
+    return {
+      id: 'welcome-bot',
+      role: 'assistant',
+      text: `Hey ${firstName}! 👋 I'm your DramaWin VIP Assistant. Ask me anything about your coins, the R${R3_BOOST_ZAR} Mystery Boost, or Sunday Pool payouts!`,
+    };
+  };
+
+  const [messages, setMessages] = useState<ChatMessageItem[]>(() => {
+    try {
+      const saved = localStorage.getItem(CHAT_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return [getInitialMessage()];
+  });
   const [chatInput, setChatInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Admin Ticket / Claim Prize Help form state
   const [ticketName, setTicketName] = useState(username || 'Player');
   const [ticketContact, setTicketContact] = useState(
     contact && contact !== 'Instant Play' ? contact : firebaseEmail || ''
@@ -152,12 +233,19 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMessage, setTicketMessage] = useState('');
   const [submittingTicket, setSubmittingTicket] = useState(false);
-  const [signingInGoogle, setSigningInGoogle] = useState(false);
   const [ticketError, setTicketError] = useState<string | null>(null);
   const [submittedReceipt, setSubmittedReceipt] = useState<{
     id: string;
     syncedToCloud: boolean;
   } | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-30)));
+    } catch {
+      // Ignore
+    }
+  }, [messages]);
 
   useEffect(() => {
     setTicketName((prev) => (prev.trim() ? prev : username || 'Player'));
@@ -175,11 +263,16 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     if (open && activeMode === 'ai' && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [open, activeMode, messages]);
+  }, [open, activeMode, messages, isTyping]);
+  useEffect(() => {
+    if (open && activeMode === 'ai' && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [open, activeMode, messages, isTyping]);
 
   const sendAiPrompt = (rawText: string) => {
     const trimmed = rawText.trim();
-    if (!trimmed) return;
+    if (!trimmed || isTyping) return;
 
     const now = Date.now();
     const userMsg: ChatMessageItem = {
@@ -187,21 +280,40 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
       role: 'user',
       text: trimmed,
     };
-    const replyText = buildFallbackSupportReply(trimmed, {
-      username,
-      coins,
-      weeklyCoins,
-      qualificationThreshold,
-      poolPrizeZar,
-    });
-    const botMsg: ChatMessageItem = {
-      id: `bot-${now + 1}`,
-      role: 'assistant',
-      text: replyText,
-    };
 
-    setMessages((prev) => [...prev, userMsg, botMsg]);
+    setMessages((prev) => [...prev, userMsg]);
     setChatInput('');
+    setIsTyping(true);
+
+    setTimeout(() => {
+      const reply = buildConversationalReply(trimmed, {
+        username,
+        coins,
+        weeklyCoins,
+        qualificationThreshold,
+        poolPrizeZar,
+      });
+
+      const botMsg: ChatMessageItem = {
+        id: `bot-${Date.now()}`,
+        role: 'assistant',
+        text: reply.text,
+        action: reply.action,
+      };
+
+      setMessages((prev) => [...prev, botMsg]);
+      setIsTyping(false);
+    }, 350);
+  };
+
+  const handleClearChat = () => {
+    const fresh = [getInitialMessage()];
+    setMessages(fresh);
+    try {
+      localStorage.removeItem(CHAT_STORAGE_KEY);
+    } catch {
+      // Ignore
+    }
   };
 
   const handleChatSubmit = (e: React.FormEvent) => {
@@ -209,383 +321,378 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     sendAiPrompt(chatInput);
   };
 
-  const handleGoogleConnectClick = async () => {
-    setTicketError(null);
-    setSigningInGoogle(true);
-    try {
-      await onSignInGoogle();
-    } catch (err) {
-      setTicketError(
-        err instanceof Error
-          ? err.message
-          : 'Google sign-in was cancelled or blocked.'
-      );
-    } finally {
-      setSigningInGoogle(false);
-    }
-  };
-
   const handleTicketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setTicketError(null);
 
     if (ticketName.trim().length < 2) {
-      setTicketError('Please enter your player name (at least 2 characters).');
+      setTicketError('Please enter your player name.');
       return;
     }
     if (ticketContact.trim().length < 4) {
-      setTicketError('Please enter your email or WhatsApp contact so Admin can reply.');
+      setTicketError('Please enter your Email or WhatsApp so we can reply.');
       return;
     }
     if (ticketSubject.trim().length < 2) {
-      setTicketError('Please add a brief subject for your message.');
+      setTicketError('Please add a short subject.');
       return;
     }
     if (ticketMessage.trim().length < 5) {
-      setTicketError('Please write a clear message or prize claim details.');
+      setTicketError('Please describe your issue or question.');
       return;
     }
 
     setSubmittingTicket(true);
     try {
-      const receipt = await onSubmitSupportTicket({
-        username: ticketName.trim(),
-        contact: ticketContact.trim(),
-        category: ticketCategory,
-        subject: ticketSubject.trim(),
-        message: ticketMessage.trim(),
+      const formData = new FormData();
+      formData.append('access_key', WEB3FORMS_ACCESS_KEY);
+      formData.append(
+        'subject',
+        `[DramaWin ${ticketCategory.toUpperCase()}] ${ticketSubject.trim()}`
+      );
+      formData.append('from_name', `DramaWin Player: ${ticketName.trim()}`);
+      if (ticketContact.includes('@')) {
+        formData.append('replyto', ticketContact.trim());
+      }
+      formData.append('Player_Name', ticketName.trim());
+      formData.append('Reply_Contact', ticketContact.trim());
+      formData.append('Category', ticketCategory);
+      formData.append('Wallet_Coins', String(coins));
+      formData.append('Weekly_Coins', String(weeklyCoins));
+      formData.append('Message', ticketMessage.trim());
+
+      const web3Res = await fetch('https://web3forms.com', {
+        method: 'POST',
+        body: formData,
       });
+      const web3Data = await web3Res.json();
+
+      let receipt = {
+        id: `DW-${Date.now().toString().slice(-5)}`,
+        syncedToCloud: Boolean(web3Data?.success),
+      };
+
+      try {
+        const appReceipt = await onSubmitSupportTicket({
+          username: ticketName.trim(),
+          contact: ticketContact.trim(),
+          category: ticketCategory,
+          subject: ticketSubject.trim(),
+          message: ticketMessage.trim(),
+        });
+        receipt = {
+          id: appReceipt.id || receipt.id,
+          syncedToCloud: Boolean(web3Data?.success) || appReceipt.syncedToCloud,
+        };
+      } catch {
+        // Fallback if local/cloud ticket handler throws while Web3Forms succeeded
+      }
+
       setSubmittedReceipt(receipt);
       setTicketSubject('');
       setTicketMessage('');
     } catch (err) {
       setTicketError(
-        err instanceof Error ? err.message : 'Unable to send support message.'
+        err instanceof Error ? err.message : 'Unable to send message. Please try again.'
       );
     } finally {
       setSubmittingTicket(false);
     }
   };
-
   return (
-    <div className="fixed bottom-20 right-3 sm:right-6 z-[60] flex flex-col items-end gap-2.5">
-      {open && (
-        <section
-          role="dialog"
-          aria-label="DramaWin AI Support Assistant & Admin Help"
-          className="obsidian-card w-[calc(100vw-1.5rem)] max-w-md h-[min(76vh,590px)] rounded-2xl border border-[#D4AF37]/50 shadow-[0_20px_70px_rgba(0,0,0,0.88),0_0_45px_rgba(212,175,55,0.18)] flex flex-col overflow-hidden"
-        >
-          {/* Header */}
-          <div className="px-4 py-3 bg-gradient-to-r from-[#1A1409] via-[#12100B] to-[#1A1409] border-b border-[#D4AF37]/30 flex items-center justify-between gap-2 shrink-0">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-9 h-9 rounded-xl gold-gradient-bg text-[#181307] flex items-center justify-center shadow-md shrink-0">
-                <Headphones className="w-4.5 h-4.5" />
+    <>
+      {open ? (
+        <div className="fixed inset-x-2 bottom-20 top-14 sm:inset-auto sm:bottom-20 sm:right-6 sm:w-[390px] sm:h-[540px] z- flex flex-col">
+          <section
+            role="dialog"
+            aria-label="DramaWin VIP Support"
+            className="flex-1 rounded-2xl border border-amber-400/25 bg-[#12100e]/95 backdrop-blur-md text-white shadow-2xl overflow-hidden flex flex-col"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-3.5 py-2.5 bg-[#1a1612] border-b border-white/10 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-amber-400/15 border border-amber-400/35 flex items-center justify-center text-amber-300 shrink-0">
+                  <Headphones className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-amber-200 truncate">
+                    DramaWin VIP Support
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 truncate">
+                    {coins.toLocaleString()} Coins · R{poolPrizeZar} Sunday Pool
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <h2 className="text-sm font-display font-bold gold-gradient-text truncate">
-                  DramaWin VIP Support
-                </h2>
-                <p className="text-[11px] text-[#BFB7A6] truncate">
-                  Coins · {R3_MYSTERY_CYCLE_ADS}-Ad R{R3_BOOST_ZAR} Boost · Sunday Pool
-                </p>
+
+              <div className="flex items-center gap-1 shrink-0">
+                {activeMode === 'ai' && messages.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={handleClearChat}
+                    title="Clear chat"
+                    aria-label="Clear chat"
+                    className="p-1.5 rounded-lg text-zinc-400 hover:text-amber-300 hover:bg-white/10 transition"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  aria-label="Close Support"
+                  className="p-1.5 rounded-lg text-zinc-300 hover:text-white bg-white/5 hover:bg-white/15 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              aria-label="Close support chat"
-              className="min-h-[36px] min-w-[36px] rounded-xl border border-white/10 text-[#BFB7A6] hover:text-[#F6F2E9] hover:bg-white/[0.06] flex items-center justify-center cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
 
-          {/* Mode Tabs */}
-          <div
-            role="tablist"
-            aria-label="Support modes"
-            className="grid grid-cols-2 gap-1.5 p-2 bg-[#09090D] border-b border-white/[0.08] shrink-0"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMode === 'ai'}
-              onClick={() => setActiveMode('ai')}
-              className={`min-h-[38px] px-2.5 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                activeMode === 'ai'
-                  ? 'gold-gradient-bg text-[#181307] shadow'
-                  : 'text-[#A69F91] hover:text-[#F6F2E9] hover:bg-white/[0.04]'
-              }`}
-            >
-              <Bot className="w-3.5 h-3.5 shrink-0" />
-              <span>AI Assistant</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMode === 'ticket'}
-              onClick={() => setActiveMode('ticket')}
-              className={`min-h-[38px] px-2.5 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                activeMode === 'ticket'
-                  ? 'gold-gradient-bg text-[#181307] shadow'
-                  : 'text-[#A69F91] hover:text-[#F6F2E9] hover:bg-white/[0.04]'
-              }`}
-            >
-              <Mail className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Message Admin / Claim Help</span>
-            </button>
-          </div>
+            {/* Segmented Mode Switch */}
+            <div className="p-2 bg-[#16130f] border-b border-white/10 shrink-0">
+              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-black/40">
+                <button
+                  type="button"
+                  onClick={() => setActiveMode('ai')}
+                  className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-semibold transition ${
+                    activeMode === 'ai'
+                      ? 'bg-amber-400 text-black shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  <Bot className="w-3.5 h-3.5 shrink-0" />
+                  <span>AI Assistant</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveMode('ticket');
+                    setSubmittedReceipt(null);
+                  }}
+                  className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-semibold transition ${
+                    activeMode === 'ticket'
+                      ? 'bg-amber-400 text-black shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  <Mail className="w-3.5 h-3.5 shrink-0" />
+                  <span>Message Admin</span>
+                </button>
+              </div>
+            </div>
 
-          {/* Tab Body */}
-          {activeMode === 'ai' ? (
-            <div className="flex-1 flex flex-col min-h-0 bg-[#070709]">
-              <div
-                ref={scrollRef}
-                className="flex-1 overflow-y-auto p-3.5 space-y-3"
-              >
-                {messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex ${
-                      msg.role === 'user' ? 'justify-end' : 'justify-start'
-                    }`}
-                  >
+            {/* AI Assistant Mode */}
+            {activeMode === 'ai' ? (
+              <>
+                <div
+                  ref={scrollRef}
+                  className="flex-1 overflow-y-auto px-3.5 py-3 space-y-2.5"
+                >
+                  {messages.map((m) => (
                     <div
-                      className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-[13px] leading-relaxed whitespace-pre-wrap ${
-                        msg.role === 'user'
-                          ? 'gold-gradient-bg text-[#181307] font-semibold rounded-br-sm shadow'
-                          : 'bg-[#121218] border border-[#D4AF37]/25 text-[#EFE9DC] rounded-bl-sm'
+                      key={m.id}
+                      className={`flex flex-col ${
+                        m.role === 'user' ? 'items-end' : 'items-start'
                       }`}
                     >
-                      {msg.text}
+                      <div
+                        className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-line ${
+                          m.role === 'user'
+                            ? 'bg-amber-400 text-black font-medium rounded-br-sm'
+                            : 'bg-[#1e1a15] border border-white/10 text-zinc-100 rounded-bl-sm'
+                        }`}
+                      >
+                        {m.text}
+                      </div>
+
+                      {m.action === 'open_ticket' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveMode('ticket');
+                            setSubmittedReceipt(null);
+                          }}
+                          className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/40 text-amber-300 text-[11px] font-semibold transition"
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          Open Message Admin Form
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
 
-              {/* Starter Prompt Buttons */}
-              <div className="px-3.5 pb-2 pt-1 flex flex-wrap gap-1.5 border-t border-white/[0.06] bg-[#0B0B10] shrink-0">
-                {QUICK_PROMPTS.map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => sendAiPrompt(q)}
-                    className="px-2.5 py-1.5 rounded-lg bg-[#16140D] border border-[#D4AF37]/30 text-[11px] font-medium text-[#FCE7A2] hover:bg-[#231D0F] transition-colors cursor-pointer text-left"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
+                  {isTyping && (
+                    <div className="flex justify-start">
+                      <div className="rounded-2xl rounded-bl-sm px-3.5 py-2 bg-[#1e1a15] border border-white/10 text-zinc-400 text-xs">
+                        Typing...
+                      </div>
+                    </div>
+                  )}
+                </div>
 
-              {/* Input Bar */}
-              <form
-                onSubmit={handleChatSubmit}
-                className="p-3 bg-[#09090D] border-t border-white/[0.08] flex items-center gap-2 shrink-0"
-              >
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Ask about coins, R3 boost, or payouts..."
-                  className="flex-1 min-h-[42px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/30 text-xs sm:text-sm text-[#F6F2E9] placeholder:text-[#7A746A] focus:outline-none focus:border-[#D4AF37]"
-                />
-                <button
-                  type="submit"
-                  disabled={!chatInput.trim()}
-                  aria-label="Send message"
-                  className="min-h-[42px] min-w-[42px] rounded-xl gold-gradient-bg text-[#181307] flex items-center justify-center hover:brightness-105 disabled:opacity-50 cursor-pointer shrink-0"
+                {/* Compact Horizontal Quick Prompts */}
+                <div className="px-3 py-1.5 border-t border-white/5 bg-[#15120e] flex gap-1.5 overflow-x-auto no-scrollbar shrink-0">
+                  {QUICK_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => sendAiPrompt(prompt)}
+                      className="whitespace-nowrap text-[11px] px-2.5 py-1 rounded-full bg-white/5 hover:bg-amber-400/20 border border-amber-400/25 text-amber-200 transition shrink-0"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Input Bar */}
+                <form
+                  onSubmit={handleChatSubmit}
+                  className="p-2.5 bg-[#1a1612] border-t border-white/10 flex items-center gap-2 shrink-0"
                 >
-                  <Send className="w-4 h-4" />
-                </button>
-              </form>
-            </div>
-          ) : (
-            <div className="flex-1 overflow-y-auto p-4 bg-[#070709] space-y-3.5">
-              {submittedReceipt ? (
-                <div className="rounded-2xl bg-[#111510] border border-emerald-500/40 p-4 space-y-3 text-center">
-                  <div className="w-11 h-11 rounded-xl gold-gradient-bg text-[#181307] mx-auto flex items-center justify-center">
-                    <CheckCircle2 className="w-6 h-6" />
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="text-sm font-display font-bold text-[#FCE7A2]">
-                      Message Sent to DramaWin Admin!
-                    </h3>
-                    <p className="text-xs text-[#CFC8B9]">
-                      Ticket <span className="font-mono-num font-bold text-white">{submittedReceipt.id}</span> has been recorded.
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Ask a question..."
+                    className="flex-1 bg-black/40 border border-white/10 focus:border-amber-400/60 rounded-xl px-3 py-2 text-xs text-white placeholder:text-zinc-500 outline-none"
+                  />
+                  <button
+                    type="submit"
+                    aria-label="Send message"
+                    className="p-2 rounded-xl bg-amber-400 text-black hover:bg-amber-300 transition shrink-0"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </form>
+              </>
+            ) : (
+              /* Clean Admin Ticket Form */
+              <div className="flex-1 overflow-y-auto p-3.5">
+                {submittedReceipt ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center px-3 space-y-2.5">
+                    <div className="w-11 h-11 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+                      <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                    </div>
+                    <h4 className="text-sm font-bold text-white">Sent to DramaWin Admin</h4>
+                    <p className="text-xs text-zinc-300">
+                      Ticket <span className="font-mono text-amber-300">{submittedReceipt.id}</span>
                     </p>
-                    <p className="text-[11px] text-emerald-300">
-                      {submittedReceipt.syncedToCloud
-                        ? `Saved to Firebase Firestore & queued Gmail alert to ${ADMIN_NOTIFICATION_EMAIL}.`
-                        : 'Saved to local Admin Board. Connect Google anytime to sync to Firebase Cloud & Gmail notifications.'}
+                    <p className="text-[11px] text-zinc-400 max-w-[260px]">
+                      We received your details and will reply to your email or WhatsApp shortly.
                     </p>
-                  </div>
-                  <div className="flex flex-col sm:flex-row gap-2 pt-1">
                     <button
                       type="button"
                       onClick={() => setSubmittedReceipt(null)}
-                      className="flex-1 min-h-[40px] px-3 rounded-xl gold-gradient-bg text-[#181307] text-xs font-bold cursor-pointer"
+                      className="mt-2 px-4 py-2 rounded-xl bg-amber-400 text-black text-xs font-semibold"
                     >
                       Send Another Message
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveMode('ai')}
-                      className="min-h-[40px] px-3 rounded-xl border border-white/15 text-xs text-[#C4BDB0] hover:bg-white/[0.04] cursor-pointer"
-                    >
-                      Back to AI Chat
-                    </button>
                   </div>
-                </div>
-              ) : (
-                <form onSubmit={handleTicketSubmit} className="space-y-3">
-                  {/* Cloud / Gmail Status Pill */}
-                  <div
-                    className={`rounded-xl px-3 py-2.5 border text-[11px] space-y-2 ${
-                      isFirebaseSignedIn
-                        ? 'bg-[#0F1711] border-emerald-500/35 text-emerald-200'
-                        : 'bg-[#17130A] border-[#D4AF37]/35 text-[#FCE7A2]'
-                    }`}
-                  >
-                    <div className="flex items-start gap-2">
-                      <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
-                      <span>
-                        {isFirebaseSignedIn
-                          ? `Firebase Sync Active (${firebaseEmail || 'Signed In'}) — saves to Admin Board & emails ${ADMIN_NOTIFICATION_EMAIL}.`
-                          : `Sign in with Google to send directly to Cloud Firestore & ${ADMIN_NOTIFICATION_EMAIL} (or submit locally right now).`}
-                      </span>
+                ) : (
+                  <form onSubmit={handleTicketSubmit} className="space-y-2.5">
+                    {ticketError && (
+                      <div className="p-2 rounded-xl bg-red-500/15 border border-red-500/40 text-red-200 text-[11px]">
+                        {ticketError}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] text-zinc-400 mb-1">
+                          Player Name
+                        </label>
+                        <input
+                          type="text"
+                          value={ticketName}
+                          onChange={(e) => setTicketName(e.target.value)}
+                          className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-zinc-400 mb-1">
+                          Email / WhatsApp
+                        </label>
+                        <input
+                          type="text"
+                          value={ticketContact}
+                          onChange={(e) => setTicketContact(e.target.value)}
+                          placeholder="you@email.com"
+                          className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
+                        />
+                      </div>
                     </div>
-                    {!isFirebaseSignedIn && (
-                      <button
-                        type="button"
-                        disabled={signingInGoogle}
-                        onClick={() => void handleGoogleConnectClick()}
-                        className="w-full min-h-[34px] px-3 rounded-lg gold-gradient-bg text-[#181307] font-bold text-[11px] hover:brightness-105 disabled:opacity-60 cursor-pointer"
+
+                    <div>
+                      <label className="block text-[11px] text-zinc-400 mb-1">Category</label>
+                      <select
+                        value={ticketCategory}
+                        onChange={(e) => setTicketCategory(e.target.value as SupportCategory)}
+                        className="w-full bg-[#1e1a15] border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
                       >
-                        {signingInGoogle
-                          ? 'Connecting Google...'
-                          : 'Sign in with Google for Cloud & Gmail Alert'}
-                      </button>
-                    )}
-                  </div>
+                        {SUPPORT_CATEGORY_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <div className="space-y-1">
-                      <label className="text-[11px] text-[#BFB7A6]">Player Name *</label>
+                    <div>
+                      <label className="block text-[11px] text-zinc-400 mb-1">Subject</label>
                       <input
                         type="text"
-                        required
-                        maxLength={40}
-                        value={ticketName}
-                        onChange={(e) => setTicketName(e.target.value)}
-                        placeholder="Your username"
-                        className="w-full min-h-[40px] px-3 rounded-xl bg-[#0D0D13] border border-white/[0.12] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                        value={ticketSubject}
+                        onChange={(e) => setTicketSubject(e.target.value)}
+                        placeholder="e.g. Sunday Pool payout help"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-[11px] text-[#BFB7A6]">Email or WhatsApp *</label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={120}
-                        value={ticketContact}
-                        onChange={(e) => setTicketContact(e.target.value)}
-                        placeholder="you@email.com or 082..."
-                        className="w-full min-h-[40px] px-3 rounded-xl bg-[#0D0D13] border border-white/[0.12] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                      />
-                    </div>
-                  </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-[#BFB7A6]">Topic / Category</label>
-                    <select
-                      value={ticketCategory}
-                      onChange={(e) => setTicketCategory(e.target.value as SupportCategory)}
-                      className="w-full min-h-[40px] px-3 rounded-xl bg-[#0D0D13] border border-white/[0.12] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                    <div>
+                      <label className="block text-[11px] text-zinc-400 mb-1">Message</label>
+                      <textarea
+                        rows={3}
+                        value={ticketMessage}
+                        onChange={(e) => setTicketMessage(e.target.value)}
+                        placeholder="Tell us how we can help..."
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60 resize-none"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={submittingTicket}
+                      className="w-full py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-black font-bold text-xs flex items-center justify-center gap-1.5 transition"
                     >
-                      {SUPPORT_CATEGORY_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-[#BFB7A6]">Subject *</label>
-                    <input
-                      type="text"
-                      required
-                      maxLength={120}
-                      value={ticketSubject}
-                      onChange={(e) => setTicketSubject(e.target.value)}
-                      placeholder="e.g. Claim Sunday Prize / Voucher Help"
-                      className="w-full min-h-[40px] px-3 rounded-xl bg-[#0D0D13] border border-white/[0.12] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-[#BFB7A6]">Message / Prize Details *</label>
-                    <textarea
-                      rows={3}
-                      required
-                      maxLength={2000}
-                      value={ticketMessage}
-                      onChange={(e) => setTicketMessage(e.target.value)}
-                      placeholder="Include voucher code, rank, or question..."
-                      className="w-full p-3 rounded-xl bg-[#0D0D13] border border-white/[0.12] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                    />
-                  </div>
-
-                  {ticketError && (
-                    <p className="rounded-xl bg-red-950/60 border border-red-500/40 px-3 py-2 text-xs text-red-100">
-                      {ticketError}
-                    </p>
-                  )}
-
-                  <button
-                    type="submit"
-                    disabled={submittingTicket}
-                    className="w-full min-h-[44px] px-4 rounded-xl gold-gradient-bg text-[#181307] font-bold text-xs sm:text-sm inline-flex items-center justify-center gap-2 hover:brightness-105 disabled:opacity-60 cursor-pointer"
-                  >
-                    {submittingTicket ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Sending to Admin...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Mail className="w-4 h-4" />
-                        <span>Send Message to Admin</span>
-                      </>
-                    )}
-                  </button>
-                </form>
-              )}
-            </div>
-          )}
-        </section>
+                      {submittingTicket ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        <>
+                          <MessageSquareHeart className="w-4 h-4" />
+                          Send to Admin
+                        </>
+                      )}
+                    </button>
+                  </form>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="fixed bottom-20 right-3 sm:right-6 z-50 flex items-center gap-1.5 px-3.5 py-2.5 rounded-full bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs shadow-lg transition"
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>Support</span>
+        </button>
       )}
+    </>
+     );
+};
 
-      {/* Floating Support Launcher Button */}
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        aria-label={open ? 'Close VIP Support Assistant' : 'Open VIP Support Assistant'}
-        className="group min-h-[48px] px-4 rounded-2xl gold-gradient-bg text-[#181307] border border-[#FFF2C2] shadow-[0_10px_30px_rgba(212,175,55,0.45)] hover:brightness-105 active:scale-[0.97] transition-all inline-flex items-center gap-2 font-bold text-xs sm:text-sm cursor-pointer"
-      >
-        {open ? (
-          <>
-            <X className="w-4 h-4" />
-            <span>Close Support</span>
-          </>
-        ) : (
-          <>
-            <MessageSquareHeart className="w-4.5 h-4.5" />
-            <span>Support AI</span>
-            <Sparkles className="w-3.5 h-3.5 opacity-80" />
-          </>
-        )}
-      </button>
-    </div>
-  );
 };
