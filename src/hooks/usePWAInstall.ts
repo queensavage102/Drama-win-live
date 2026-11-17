@@ -11,6 +11,23 @@ declare global {
   }
 }
 
+function detectIOS(): boolean {
+  if (typeof window === 'undefined') return false;
+  const ua = window.navigator.userAgent || '';
+  const isAppleDevice = /iphone|ipad|ipod/i.test(ua);
+  const isIPadOS =
+    window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1;
+  return isAppleDevice || isIPadOS;
+}
+
+function detectInAppBrowser(): boolean {
+  if (typeof window === 'undefined') return false;
+  const ua = window.navigator.userAgent || '';
+  return /FBAN|FBAV|Instagram|WhatsApp|TikTok|BytedanceWebview|Musical_ly|Snapchat|Line\/|MicroMessenger|wv\)/i.test(
+    ua
+  );
+}
+
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(() =>
     typeof window !== 'undefined' ? window.__dramawinInstallPrompt || null : null
@@ -22,10 +39,8 @@ export function usePWAInstall() {
       (window.navigator as unknown as { standalone?: boolean }).standalone === true
     );
   });
-  const [isIOS, setIsIOS] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return /iphone|ipad|ipod/i.test(window.navigator.userAgent);
-  });
+  const [isIOS, setIsIOS] = useState<boolean>(() => detectIOS());
+  const [isInAppBrowser, setIsInAppBrowser] = useState<boolean>(() => detectInAppBrowser());
   const [inIframe, setInIframe] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     try {
@@ -44,7 +59,8 @@ export function usePWAInstall() {
     };
 
     checkStandalone();
-    setIsIOS(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
+    setIsIOS(detectIOS());
+    setIsInAppBrowser(detectInAppBrowser());
     try {
       setInIframe(window.self !== window.top);
     } catch {
@@ -103,11 +119,24 @@ export function usePWAInstall() {
     return outcome;
   }, [deferredPrompt]);
 
+  const openInExternalBrowser = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const currentUrl = window.location.href;
+    if (!isIOS) {
+      const strippedUrl = currentUrl.replace(/^https?:\/\//, '');
+      window.location.href = `intent://${strippedUrl}#Intent;scheme=https;package=com.android.chrome;end`;
+    } else {
+      window.open(currentUrl, '_blank', 'noopener,noreferrer');
+    }
+  }, [isIOS]);
+
   return {
     isInstallable: Boolean(deferredPrompt),
     isInstalled,
     isIOS,
+    isInAppBrowser,
     inIframe,
     install,
+    openInExternalBrowser,
   };
 }
