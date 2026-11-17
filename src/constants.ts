@@ -694,14 +694,36 @@ export function getYouTubeThumbnailUrl(rawUrl: string): string | null {
   return extractYouTubeMedia(rawUrl).thumbnailUrl;
 }
 
-export function getYouTubeEmbedUrl(rawUrl: string, startSeconds?: number): string | null {
-  const baseUrl = extractYouTubeMedia(rawUrl).embedUrl;
-  if (!baseUrl) return null;
-  if (typeof startSeconds === 'number' && Number.isFinite(startSeconds) && startSeconds > 0 && !baseUrl.includes('start=')) {
-    const sep = baseUrl.includes('?') ? '&' : '?';
-    return `${baseUrl}${sep}start=${Math.floor(startSeconds)}`;
+
+  export function getYouTubeEmbedUrl(rawUrl: string, startSeconds?: number): string | null {
+  const rawEmbed = extractYouTubeMedia(rawUrl).embedUrl;
+  if (!rawEmbed) return null;
+
+  let finalUrl = rawEmbed.replace(
+  'https://www.youtube-nocookie.com',
+  'https://www.youtube.com'
+);
+
+
+  const appendParam = (url: string, key: string, value: string) => {
+    if (new RegExp(`[?&]${key}=`).test(url)) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}${key}=${value}`;
+  };
+
+  finalUrl = appendParam(finalUrl, 'playsinline', '1');
+  finalUrl = appendParam(finalUrl, 'enablejsapi', '1');
+  finalUrl = appendParam(finalUrl, 'mute', '1');
+
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    finalUrl = appendParam(finalUrl, 'origin', encodeURIComponent(window.location.origin));
   }
-  return baseUrl;
+
+  if (typeof startSeconds === 'number' && Number.isFinite(startSeconds) && startSeconds > 0) {
+    finalUrl = appendParam(finalUrl, 'start', String(Math.floor(startSeconds)));
+  }
+
+  return finalUrl;
 }
 
 export function getYouTubePreviewEmbedUrl(rawUrl: string): string | null {
