@@ -1,6 +1,6 @@
 import React, { useId, useState } from 'react';
-import { Sparkles, Check, Copy, X, Trophy, PartyPopper } from 'lucide-react';
-import { BRAND_NAME } from '../constants';
+import { Sparkles, Check, Copy, X, Trophy, PartyPopper, RotateCcw } from 'lucide-react';
+import { BRAND_NAME, R3_BOOST_ZAR, R3_MYSTERY_CYCLE_ADS } from '../constants';
 import { MysteryWinnerRecord, PlayerPrivate } from '../types';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
@@ -28,6 +28,7 @@ interface MysteryVaultCardProps {
   pendingGiftBox?: {
     boxNumber: number;
     secondsLeft: number;
+    progress?: number;
   } | null;
   voucherModal: {
     winner: MysteryWinnerRecord;
@@ -166,10 +167,11 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
     privateState.openedMysteryBoxesDate === todayKey
       ? privateState.openedMysteryBoxesToday || []
       : [];
-  const openedTodayList = Array.from(
+  const rawOpenedList = Array.from(
     new Set([...storedOpenedList, ...(openedBoxesOverride || [])])
   );
-  const allBoxesOpenedToday = openedTodayList.length >= 12;
+  const openedTodayList =
+    rawOpenedList.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawOpenedList;
 
   const activeRevealForToday =
     mysteryReveal && mysteryReveal.dateKey === todayKey ? mysteryReveal : null;
@@ -177,7 +179,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
   const handleCopyVoucher = async () => {
     if (!voucherModal) return;
     const { winner } = voucherModal;
-    const text = `${BRAND_NAME} R5 Airtime Winner!\nPlayer: ${winner.username}\nVoucher: ${winner.voucherCode}\nContact: ${winner.contact}`;
+    const text = `${BRAND_NAME} R${R3_BOOST_ZAR} Progress Bar Boost Winner!\nPlayer: ${winner.username}\nVoucher: ${winner.voucherCode}\nContact: ${winner.contact}`;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -210,40 +212,52 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
               </h2>
             </div>
             <p className="text-xs sm:text-sm text-[#BFB7A6]">
-              Tap any glowing gift box to open it and unlock bonus coins or the R5 Airtime jackpot.
+              Tap any glowing gift box to watch a 20s sponsor ad and earn bonus coins. Claim {R3_MYSTERY_CYCLE_ADS} ads to unlock the R{R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) — then the grid auto-resets to Box #1!
             </p>
           </div>
 
           <div className="shrink-0">
-            {allBoxesOpenedToday ? (
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#E8C96D]">
-                <Check className="w-4 h-4 text-[#FCE7A2]" />
-                <span>All 12 Boxes Opened Today</span>
+            {openedTodayList.length === 0 ? (
+              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FCE7A2] drop-shadow-[0_0_10px_rgba(252,231,162,0.45)] font-mono-num">
+                <RotateCcw className="w-4 h-4 text-[#FCE7A2]" />
+                <span>New {R3_MYSTERY_CYCLE_ADS}-Ad Cycle Ready • Box #1+</span>
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FCE7A2] drop-shadow-[0_0_10px_rgba(252,231,162,0.45)] font-mono-num">
                 <Sparkles className="w-4 h-4 text-[#FCE7A2]" />
-                <span>{12 - openedTodayList.length} / 12 Boxes Ready</span>
+                <span>
+                  Ad Cycle: {openedTodayList.length} / {R3_MYSTERY_CYCLE_ADS} • R{R3_BOOST_ZAR} Boost
+                </span>
               </span>
             )}
           </div>
         </div>
 
-        {/* Pending 20-Second Sponsor Ad Banner (Shown BEFORE outcome resolves) */}
+        {/* Pending 20-Second Sponsor Ad Banner + Progress Bar (Strictly inside Mystery Vault modal/card) */}
         {pendingGiftBox && (
           <div
             role="status"
-            className="relative rounded-xl px-4 py-3 border border-amber-400/65 bg-gradient-to-r from-[#2A200A] via-[#17130A] to-[#2A200A] text-[#FCE7A2] flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm shadow-[0_0_24px_rgba(251,191,36,0.25)]"
+            className="relative overflow-hidden rounded-xl px-4 py-3 border border-amber-400/65 bg-gradient-to-r from-[#2A200A] via-[#17130A] to-[#2A200A] text-[#FCE7A2] space-y-2.5 text-xs sm:text-sm shadow-[0_0_24px_rgba(251,191,36,0.25)]"
           >
-            <div className="flex items-center gap-2.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
-              <span className="font-bold">
-                Sponsor Ad Active — Unlocking Gift Box #{pendingGiftBox.boxNumber}...
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+                <span className="font-bold">
+                  Sponsor Ad Active — Unlocking Gift Box #{pendingGiftBox.boxNumber}...
+                </span>
+              </div>
+              <span className="font-mono-num font-extrabold bg-black/60 text-amber-300 px-3 py-1 rounded-full border border-amber-400/45">
+                {pendingGiftBox.secondsLeft}s remaining
               </span>
             </div>
-            <span className="font-mono-num font-extrabold bg-black/60 text-amber-300 px-3 py-1 rounded-full border border-amber-400/45">
-              {pendingGiftBox.secondsLeft}s remaining
-            </span>
+            <div className="w-full h-2 rounded-full bg-black/60 border border-amber-400/30 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 shadow-[0_0_12px_rgba(251,191,36,0.9)] transition-[width] duration-75 ease-linear"
+                style={{
+                  width: `${Math.min(100, Math.max(0, pendingGiftBox.progress ?? 0))}%`,
+                }}
+              />
+            </div>
           </div>
         )}
 
@@ -261,13 +275,13 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
           >
             {activeRevealForToday.kind === 'airtime' ? (
               <span>
-                🎉 YOU WON CONGRATULATIONS! 🎉 Box #{activeRevealForToday.boxNumber} unlocked R5 Airtime!
+                🎉 YOU WON CONGRATULATIONS! 🎉 Box #{activeRevealForToday.boxNumber} unlocked an R{R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins)!
               </span>
             ) : activeRevealForToday.kind === 'jackpot' ? (
               <div className="flex items-center gap-2.5">
                 <RealisticGoldCoin sizePx={48} emblem="★" className="shrink-0" />
                 <span>
-                  🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁
+                  🎉 11th Ad Complete! R{R3_BOOST_ZAR} Progress Bar Boost (+1,000 Bonus Coins) Unlocked — Grid Reset to Box #1! Tap any box to repeat!
                 </span>
               </div>
             ) : activeRevealForToday.kind === 'oops' ? (
@@ -282,7 +296,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                 <div className="flex items-center gap-2.5">
                   <RealisticGoldCoin sizePx={48} emblem="$" className="shrink-0" />
                   <span className="font-semibold">
-                    🎁 Gift Box #{activeRevealForToday.boxNumber} Unlocked! Keep opening boxes for the Jackpot!
+                    🎁 Gift Box #{activeRevealForToday.boxNumber} Unlocked! Keep watching ads ({openedTodayList.length}/{R3_MYSTERY_CYCLE_ADS}) for the R{R3_BOOST_ZAR} Boost!
                   </span>
                 </div>
                 {activeRevealForToday.coins ? (
@@ -302,12 +316,11 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
             const isOpenedToday = openedTodayList.includes(boxNumber);
             const isPendingBox = pendingGiftBox?.boxNumber === boxNumber;
             const isLatestPicked = activeRevealForToday?.boxNumber === boxNumber;
-            const isWonR5 = isLatestPicked && activeRevealForToday?.kind === 'airtime';
+            const isWonR3 = isLatestPicked && activeRevealForToday?.kind === 'airtime';
             const isWonJackpot = isLatestPicked && activeRevealForToday?.kind === 'jackpot';
             const isOopsLatest = isLatestPicked && activeRevealForToday?.kind === 'oops';
-            const isWinningTile = isWonR5 || isWonJackpot;
-            const isInteractive =
-              !pendingGiftBox && !isOpenedToday && activeRevealForToday?.kind !== 'jackpot';
+            const isWinningTile = isWonR3 || isWonJackpot;
+            const isInteractive = !pendingGiftBox && !isOpenedToday;
             const shimmerDelay = `${(idx % 4) * 0.45}s`;
 
             const boxClasses = `group relative min-h-[118px] sm:min-h-[132px] rounded-2xl border p-2.5 sm:p-3 flex flex-col items-center justify-center gap-1.5 overflow-hidden transition-all duration-300 ${
@@ -371,13 +384,13 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                   </div>
                 ) : isOpenedToday ? (
                   <div className="relative z-10 flex flex-col items-center justify-center gap-1.5 text-center px-1">
-                    {isWonR5 ? (
+                    {isWonR3 ? (
                       <>
                         <div className="w-10 h-10 rounded-full gold-gradient-bg text-[#181307] flex items-center justify-center shadow-[0_0_18px_rgba(252,231,162,0.75)]">
                           <Trophy className="w-5 h-5" />
                         </div>
                         <span className="gold-gradient-bg text-[#181307] px-2 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide shadow-md leading-tight">
-                          🎉 R5 WON!
+                          🎉 R{R3_BOOST_ZAR} BOOST!
                         </span>
                       </>
                     ) : isWonJackpot ? (
@@ -401,10 +414,10 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                     ) : (
                       <>
                         <div className="w-9 h-9 rounded-full bg-[#241E11] border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center text-base">
-                          🥲
+                          ✓
                         </div>
                         <span className="text-[10px] font-semibold text-[#FCE7A2] leading-tight">
-                          Empty
+                          Claimed
                         </span>
                       </>
                     )}
@@ -457,7 +470,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
         </div>
       </section>
 
-      {/* Bold Celebration Popup when Winning the R5 Box */}
+      {/* Bold Celebration Popup when Winning the R3 Progress Bar Boost */}
       {voucherModal && (
         <div
           role="dialog"
@@ -481,13 +494,13 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
 
             <div className="space-y-2">
               <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#E8C96D]">
-                R5 Airtime Jackpot Unlocked
+                R{R3_BOOST_ZAR} Progress Bar Boost Unlocked
               </p>
               <h3 className="text-2xl sm:text-3xl font-display font-bold gold-gradient-text leading-tight">
                 YOU WON CONGRATULATIONS! 🎉
               </h3>
               <p className="text-xs sm:text-sm text-[#DDD4C4]">
-                Box #{voucherModal.winner.boxNumber} unlocked an instant R5 Airtime prize for{' '}
+                Box #{voucherModal.winner.boxNumber} unlocked an R{R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) for{' '}
                 <strong className="text-[#F6F2E9]">{voucherModal.winner.username}</strong>
                 {voucherModal.newPoolPrizeZar
                   ? ` and boosted the Sunday Prize Pool to R${voucherModal.newPoolPrizeZar}!`
@@ -497,7 +510,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
 
             <div className="rounded-xl bg-[#070709] border border-[#D4AF37]/45 p-4 space-y-1">
               <p className="text-[11px] uppercase tracking-widest text-[#8D867A]">
-                R5 Winner Voucher Code
+                R{R3_BOOST_ZAR} Boost Winner Voucher Code
               </p>
               <p className="font-mono-num text-xl font-bold gold-gradient-text tracking-wider">
                 {voucherModal.winner.voucherCode}

@@ -145,3 +145,52 @@ export interface ToastNotice {
   actionLabel?: string;
   onAction?: () => void;
 }
+
+export type PrizeWinType = 'sunday_pool' | 'mystery_r3_boost' | 'mystery_11th_jackpot';
+
+export interface PrizeWinRecord {
+  id: string;
+  uid: string;
+  createdByUid: string;
+  username: string;
+  contact?: string;
+  prizeType: PrizeWinType;
+  amountZar: number;
+  coinsAwarded: number;
+  voucherCode?: string;
+  boxNumber?: number;
+  rank?: number;
+  weekKey?: string;
+  summary: string;
+  status: 'recorded' | 'paid';
+  createdAt?: Timestamp;
+  createdAtMs?: number;
+}
+
+export type SupportCategory =
+  | 'claim_prize'
+  | 'coins'
+  | 'mystery_box'
+  | 'sunday_pool'
+  | 'feedback'
+  | 'other';
+
+export type SupportStatus = 'open' | 'resolved';
+
+export interface SupportMessageRecord {
+  id: string;
+  uid: string;
+  username: string;
+  contact: string;
+  category: SupportCategory;
+  subject: string;
+  message: string;
+  status: SupportStatus;
+  adminNote?: string;
+  resolvedBy?: string;
+  source?: 'cloud' | 'local';
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+  createdAtMs?: number;
+  updatedAtMs?: number;
+}

@@ -21,8 +21,12 @@ import {
   ArrowUp,
   ArrowDown,
   Table2,
+  MessageSquare,
+  CheckCircle2,
+  Mail,
 } from 'lucide-react';
 import {
+  ADMIN_NOTIFICATION_EMAIL,
   ADMIN_PASSCODE,
   BRAND_NAME,
   DEFAULT_LIVE_TICKER_NAMES,
@@ -30,6 +34,8 @@ import {
   DEFAULT_REAL_AD_SCRIPT,
   DEFAULT_VIDEO_START_SECONDS,
   DRAMA_CATEGORIES,
+  R3_BOOST_ZAR,
+  R3_MYSTERY_CYCLE_ADS,
   extractYouTubeId,
   extractYouTubePlaylistId,
   getCanonicalVideoKey,
@@ -47,6 +53,9 @@ import {
   DramaEpisode,
   LeaderboardPlayer,
   MysteryWinnerRecord,
+  PrizeWinRecord,
+  SupportMessageRecord,
+  SupportStatus,
 } from '../types';
 import { resolveEpisodeCover } from '../utils/localState';
 import { saveMediaFile, useResolvedMediaUrl } from '../utils/mediaStore';
@@ -76,6 +85,8 @@ interface AdminBoardPageProps {
   episodes: DramaEpisode[];
   players: LeaderboardPlayer[];
   mysteryWinners: MysteryWinnerRecord[];
+  supportMessages?: SupportMessageRecord[];
+  prizeWins?: PrizeWinRecord[];
   onBackToApp: () => void;
   onUnlock: (passcode: string) => Promise<void>;
   onConnectFirebaseAdmin?: () => Promise<void>;
@@ -109,6 +120,11 @@ interface AdminBoardPageProps {
     player: LeaderboardPlayer,
     newCoins: number,
     newWeeklyCoins: number
+  ) => Promise<void>;
+  onResolveSupportMessage?: (
+    msg: SupportMessageRecord,
+    status: SupportStatus,
+    adminNote?: string
   ) => Promise<void>;
 }
 
@@ -219,6 +235,8 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   episodes,
   players,
   mysteryWinners,
+  supportMessages = [],
+  prizeWins = [],
   onBackToApp,
   onUnlock,
   onConnectFirebaseAdmin,
@@ -237,6 +255,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   onReorderSeries,
   onRestoreDefaultEpisodes,
   onAdjustPlayerCoins,
+  onResolveSupportMessage,
 }) => {
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
@@ -358,6 +377,9 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     Record<string, { coins: string; weekly: string }>
   >({});
   const [savingPlayerId, setSavingPlayerId] = useState<string | null>(null);
+  const [supportFilter, setSupportFilter] = useState<'open' | 'resolved' | 'all'>('open');
+  const [supportNoteDrafts, setSupportNoteDrafts] = useState<Record<string, string>>({});
+  const [resolvingMessageId, setResolvingMessageId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [floatingToast, setFloatingToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -778,10 +800,10 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       });
       setStatusMessage(
         nextPickWinsR5Input
-          ? 'Saved! Next Mystery Box pick by any player will win R5 Airtime (+R5 added to pool).'
+          ? `Saved! Next Mystery Box pick by any player will unlock the R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins & +R${R3_BOOST_ZAR} added to pool).`
           : r5WinnerUsernameInput.trim()
-            ? `Saved! "${r5WinnerUsernameInput.trim()}" is set to win R5 Airtime on their next Mystery Box pick.`
-            : 'Mystery Vault & Sunday Prize Pool saved.'
+            ? `Saved! "${r5WinnerUsernameInput.trim()}" is set to unlock the R${R3_BOOST_ZAR} Progress Bar Boost on their next Mystery Box pick.`
+            : `Mystery Vault (${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Reset Cycle) & Sunday Prize Pool saved.`
       );
     } catch (err) {
       setStatusMessage(
@@ -1221,6 +1243,37 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   const filteredPlayers = players.filter((p) =>
     p.username.toLowerCase().includes(playerSearch.toLowerCase().trim())
   );
+
+  const openSupportCount = supportMessages.filter((m) => m.status === 'open').length;
+  const resolvedSupportCount = supportMessages.filter((m) => m.status === 'resolved').length;
+  const visibleSupportMessages = supportMessages.filter((m) => {
+    if (supportFilter === 'all') return true;
+    return m.status === supportFilter;
+  });
+
+  const handleToggleResolveSupport = async (
+    msg: SupportMessageRecord,
+    nextStatus: SupportStatus
+  ) => {
+    if (!onResolveSupportMessage) return;
+    setResolvingMessageId(msg.id);
+    setStatusMessage(null);
+    try {
+      const note = supportNoteDrafts[msg.id] ?? msg.adminNote ?? '';
+      await onResolveSupportMessage(msg, nextStatus, note);
+      showAdminToast(
+        nextStatus === 'resolved'
+          ? `Support ticket from ${msg.username} marked resolved.`
+          : `Support ticket from ${msg.username} reopened.`
+      );
+    } catch (err) {
+      setStatusMessage(
+        err instanceof Error ? err.message : 'Unable to update ticket status.'
+      );
+    } finally {
+      setResolvingMessageId(null);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#070709] text-[#F6F2E9] pb-16">
@@ -2371,13 +2424,18 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
               </div>
             </section>
 
-            {/* 4. Mystery Vault R5 Winner, Ticker & Sunday Pool Controls */}
+            {/* 4. Mystery Vault R3 Progress Bar Boost, 11-Ad Reset, Ticker & Sunday Pool Controls */}
             <section className="obsidian-card rounded-2xl p-5 sm:p-6 space-y-4">
-              <div className="flex items-center gap-2">
-                <Gift className="w-4 h-4 text-[#D4AF37]" />
-                <h2 className="text-base sm:text-lg font-display font-bold text-[#F6F2E9]">
-                  Secret Mystery Vault R5 Winner &amp; Sunday Pool Controls
-                </h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Gift className="w-4 h-4 text-[#D4AF37]" />
+                  <h2 className="text-base sm:text-lg font-display font-bold text-[#F6F2E9]">
+                    Secret Mystery Vault R{R3_BOOST_ZAR} Boost ({R3_MYSTERY_CYCLE_ADS}-Ad Reset) &amp; Sunday Pool Controls
+                  </h2>
+                </div>
+                <span className="text-[11px] font-mono-num text-[#E8C96D]">
+                  Auto-resets after {R3_MYSTERY_CYCLE_ADS}th ad · Gmail: {ADMIN_NOTIFICATION_EMAIL}
+                </span>
               </div>
 
               <form
@@ -2389,7 +2447,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     htmlFor="admin-r5-winner-username"
                     className="text-[11px] font-semibold text-[#E8C96D]"
                   >
-                    Set R5 Mystery Box Winner (Player Username)
+                    Set R{R3_BOOST_ZAR} Progress Bar Boost Winner (Player Username)
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -2399,7 +2457,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                       maxLength={32}
                       value={r5WinnerUsernameInput}
                       onChange={(e) => setR5WinnerUsernameInput(e.target.value)}
-                      placeholder="Leave blank for coin-only boxes, or enter Username"
+                      placeholder="Leave blank for 11-ad auto-reset cycle, or enter Username"
                       className="flex-1 min-h-[42px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/30 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                     />
                     <datalist id="admin-player-usernames">
@@ -2422,10 +2480,10 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                 <div className="sm:col-span-2 flex items-center justify-between gap-3 rounded-xl bg-[#070709] border border-white/[0.08] px-3.5 py-2.5">
                   <div className="min-w-0">
                     <p className="text-xs font-semibold text-[#F6F2E9]">
-                      Next Pick Wins R5 Airtime
+                      Next Pick Wins R{R3_BOOST_ZAR} Progress Bar Boost
                     </p>
                     <p className="text-[11px] text-[#8D867A]">
-                      Toggle ON so the very next Mystery Box pick triggers the R5 celebration popup.
+                      Toggle ON so the very next Mystery Box pick triggers the R{R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins &amp; +R{R3_BOOST_ZAR} Pool) celebration popup.
                     </p>
                   </div>
                   <button
@@ -2478,7 +2536,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     disabled={savingVaultConfig}
                     className="min-h-[40px] px-4 rounded-xl gold-gradient-bg text-[#181307] text-xs font-bold hover:brightness-105 disabled:opacity-60"
                   >
-                    Save R5 Winner &amp; Pool Settings
+                    Save R{R3_BOOST_ZAR} Boost &amp; Pool Settings
                   </button>
                   <button
                     type="button"
@@ -2563,11 +2621,11 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
               <div className="pt-3 border-t border-white/[0.08] space-y-2">
                 <p className="text-xs font-semibold text-[#E8C96D]">
-                  R5 Airtime Winners Log ({mysteryWinners.length})
+                  R{R3_BOOST_ZAR} Progress Bar Boost Winners Log ({mysteryWinners.length})
                 </p>
                 {mysteryWinners.length === 0 ? (
                   <p className="text-xs text-[#8D867A]">
-                    No R5 Airtime Mystery Vault winners recorded yet.
+                    No R{R3_BOOST_ZAR} Progress Bar Boost Mystery Vault winners recorded yet.
                   </p>
                 ) : (
                   <div className="divide-y divide-white/[0.06] max-h-44 overflow-y-auto">
@@ -2595,6 +2653,223 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   </div>
                 )}
               </div>
+
+              <div className="pt-3 border-t border-white/[0.08] space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-[#E8C96D]">
+                    Prize Wins &amp; Sunday Pool Payouts (`prize_wins`: {prizeWins.length})
+                  </p>
+                  <span className="text-[11px] text-[#8D867A] inline-flex items-center gap-1">
+                    <Mail className="w-3 h-3 text-[#D4AF37]" />
+                    <span>Auto-emails {ADMIN_NOTIFICATION_EMAIL}</span>
+                  </span>
+                </div>
+                {prizeWins.length === 0 ? (
+                  <p className="text-xs text-[#8D867A]">
+                    No Sunday Pool or Mystery R{R3_BOOST_ZAR} Boost prize wins recorded yet.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-white/[0.06] max-h-52 overflow-y-auto">
+                    {prizeWins.map((win) => (
+                      <div
+                        key={win.id}
+                        className="py-2 flex flex-wrap items-center justify-between gap-2 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-semibold text-[#F6F2E9] truncate">
+                            {win.username}{' '}
+                            <span className="text-[11px] font-normal text-[#A69F91]">
+                              · {win.summary}
+                            </span>
+                          </p>
+                          <p className="text-[11px] text-[#8D867A] font-mono-num">
+                            {win.prizeType} {win.voucherCode ? `· ${win.voucherCode}` : ''}{' '}
+                            {win.contact ? `· ${win.contact}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 font-mono-num shrink-0">
+                          {win.amountZar > 0 && (
+                            <span className="px-2 py-0.5 rounded bg-[#D4AF37]/15 text-[#FCE7A2] font-bold">
+                              R{win.amountZar}
+                            </span>
+                          )}
+                          {win.coinsAwarded > 0 && (
+                            <span className="text-[#E8C96D]">
+                              +{win.coinsAwarded.toLocaleString()} Coins
+                            </span>
+                          )}
+                          <span className="text-[#8D867A]">
+                            {win.createdAt?.toDate
+                              ? win.createdAt.toDate().toLocaleDateString()
+                              : win.createdAtMs
+                                ? new Date(win.createdAtMs).toLocaleDateString()
+                                : 'Just now'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* 4B. Support Messages & Claim Prize Help Queue */}
+            <section className="obsidian-card rounded-2xl p-5 sm:p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-[#D4AF37]" />
+                    <h2 className="text-base sm:text-lg font-display font-bold text-[#F6F2E9]">
+                      Support Messages &amp; Claim Prize Help ({supportMessages.length})
+                    </h2>
+                  </div>
+                  <p className="text-xs text-[#8D867A]">
+                    Tickets submitted via the floating Support widget — auto-emailed to {ADMIN_NOTIFICATION_EMAIL}.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  {(['open', 'resolved', 'all'] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setSupportFilter(tab)}
+                      className={`min-h-[34px] px-3 rounded-lg text-xs font-bold capitalize transition-colors cursor-pointer ${
+                        supportFilter === tab
+                          ? 'gold-gradient-bg text-[#181307]'
+                          : 'bg-[#09090D] border border-white/[0.1] text-[#A69F91] hover:text-[#F6F2E9]'
+                      }`}
+                    >
+                      {tab === 'open'
+                        ? `Open (${openSupportCount})`
+                        : tab === 'resolved'
+                          ? `Resolved (${resolvedSupportCount})`
+                          : `All (${supportMessages.length})`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {visibleSupportMessages.length === 0 ? (
+                <div className="rounded-xl bg-[#09090D] border border-white/[0.08] p-4 text-xs text-[#8D867A]">
+                  No {supportFilter === 'all' ? '' : `${supportFilter} `}support messages right now.
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[540px] overflow-y-auto pr-1">
+                  {visibleSupportMessages.map((msg) => {
+                    const isResolved = msg.status === 'resolved';
+                    const isBusy = resolvingMessageId === msg.id;
+                    const noteValue =
+                      supportNoteDrafts[msg.id] !== undefined
+                        ? supportNoteDrafts[msg.id]
+                        : msg.adminNote || '';
+                    const dateLabel = msg.createdAt?.toDate
+                      ? msg.createdAt.toDate().toLocaleString()
+                      : msg.createdAtMs
+                        ? new Date(msg.createdAtMs).toLocaleString()
+                        : 'Just now';
+
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`rounded-xl border p-4 space-y-3 ${
+                          isResolved
+                            ? 'bg-[#0A0F0B] border-emerald-500/25'
+                            : 'bg-[#09090D] border-[#D4AF37]/30'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                  isResolved
+                                    ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
+                                    : 'bg-amber-400/20 text-amber-200 border border-amber-400/40'
+                                }`}
+                              >
+                                {isResolved ? 'Resolved' : 'Open'}
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-white/[0.06] text-[10px] font-semibold uppercase text-[#E8C96D]">
+                                {msg.category.replace(/_/g, ' ')}
+                              </span>
+                              <span className="text-[11px] font-mono-num text-[#8D867A]">
+                                {msg.source === 'local' ? 'Local Storage' : 'Firebase Cloud'}
+                              </span>
+                            </div>
+                            <h3 className="text-sm font-bold text-[#F6F2E9]">
+                              {msg.subject}
+                            </h3>
+                            <p className="text-xs text-[#BFB7A6]">
+                              From <strong className="text-[#FCE7A2]">{msg.username}</strong> ·{' '}
+                              <span className="font-mono-num">{msg.contact}</span> · {dateLabel}
+                            </p>
+                          </div>
+
+                          {onResolveSupportMessage && (
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() =>
+                                void handleToggleResolveSupport(
+                                  msg,
+                                  isResolved ? 'open' : 'resolved'
+                                )
+                              }
+                              className={`min-h-[36px] px-3 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50 ${
+                                isResolved
+                                  ? 'border border-white/15 text-[#C4BDB0] hover:bg-white/[0.06]'
+                                  : 'gold-gradient-bg text-[#181307] hover:brightness-105'
+                              }`}
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>
+                                {isBusy
+                                  ? 'Updating...'
+                                  : isResolved
+                                    ? 'Reopen Ticket'
+                                    : 'Mark Resolved'}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+
+                        <p className="text-xs sm:text-sm text-[#E5DFD2] bg-[#070709] border border-white/[0.06] rounded-lg p-3 whitespace-pre-wrap">
+                          {msg.message}
+                        </p>
+
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="text"
+                            maxLength={500}
+                            value={noteValue}
+                            onChange={(e) =>
+                              setSupportNoteDrafts((prev) => ({
+                                ...prev,
+                                [msg.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Optional admin resolution note (saved on resolve/update)"
+                            className="flex-1 min-h-[38px] px-3 rounded-lg bg-[#070709] border border-white/[0.1] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                          />
+                          {onResolveSupportMessage && (
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() =>
+                                void handleToggleResolveSupport(msg, msg.status)
+                              }
+                              className="min-h-[38px] px-3 rounded-lg border border-[#D4AF37]/35 text-[#FCE7A2] hover:bg-[#D4AF37]/10 text-xs font-semibold whitespace-nowrap cursor-pointer disabled:opacity-50"
+                            >
+                              Save Note
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </section>
 
             {/* 5. Adjust Player Coin Balances */}

@@ -148,7 +148,7 @@ export function playCoinPotCashChime(muted = isSoundMuted()): void {
 }
 
 /**
- * Celebratory gold-chord fanfare for R5 Airtime / Pool wins.
+ * Celebratory gold-chord fanfare for R3 Progress Bar Boost / Pool wins.
  */
 export function playVictoryFanfare(muted = isSoundMuted()): void {
   if (muted) return;

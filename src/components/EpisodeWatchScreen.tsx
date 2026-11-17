@@ -174,10 +174,14 @@ const isDirectVideoMediaUrl = (url: string): boolean => {
   return /\.(mp4|webm|ogg|mov|m4v|m3u8)(\?|#|$)/i.test(url);
 };
 
-function postYouTubeCommand(iframe: HTMLIFrameElement | null, func: string) {
+function postYouTubeCommand(
+  iframe: HTMLIFrameElement | null,
+  func: string,
+  args: unknown[] = []
+) {
   try {
     iframe?.contentWindow?.postMessage(
-      JSON.stringify({ event: 'command', func, args: [] }),
+      JSON.stringify({ event: 'command', func, args }),
       '*'
     );
   } catch {
@@ -189,16 +193,17 @@ const WatchVideoStage: React.FC<{
   episode: DramaEpisode;
   zoomed: boolean;
   paused: boolean;
+  muted: boolean;
   resumePlaybackSignal: number;
   onPlayingChange?: (playing: boolean) => void;
   onVideoEnded?: () => void;
-}> = ({ episode, zoomed, paused, resumePlaybackSignal, onPlayingChange, onVideoEnded }) => {
+}> = ({ episode, zoomed, paused, muted, resumePlaybackSignal, onPlayingChange, onVideoEnded }) => {
   const rawVideoUrl = sanitizeMediaUrl((episode.videoUrl || episode.youtubeUrl || '').trim());
   const customStart =
     typeof episode.startTime === 'number' && Number.isFinite(episode.startTime)
       ? Math.max(0, Math.floor(episode.startTime))
       : undefined;
-  const embedUrl = rawVideoUrl ? getYouTubeEmbedUrl(rawVideoUrl, customStart) : null;
+  const embedUrl = rawVideoUrl ? getYouTubeEmbedUrl(rawVideoUrl, customStart, false) : null;
   const bareYouTubeDomain = rawVideoUrl ? isYouTubeDomainOnly(rawVideoUrl) : false;
   const resolvedMediaUrl = useResolvedMediaUrl(embedUrl || bareYouTubeDomain ? '' : rawVideoUrl);
 
@@ -220,13 +225,28 @@ const WatchVideoStage: React.FC<{
       postYouTubeCommand(iframeRef.current, paused ? 'pauseVideo' : 'playVideo');
     }
     if (videoRef.current) {
+      videoRef.current.muted = muted;
+      videoRef.current.volume = 1;
       if (paused) {
         videoRef.current.pause();
       } else {
         void videoRef.current.play().catch(() => {});
       }
     }
-  }, [paused, resumePlaybackSignal, embedUrl, resolvedMediaUrl]);
+  }, [paused, resumePlaybackSignal, embedUrl, resolvedMediaUrl, muted]);
+
+  useEffect(() => {
+    if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
+      postYouTubeCommand(iframeRef.current, muted ? 'mute' : 'unMute');
+      if (!muted) {
+        postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+      }
+    }
+    if (videoRef.current) {
+      videoRef.current.muted = muted;
+      videoRef.current.volume = 1;
+    }
+  }, [muted, embedUrl, resolvedMediaUrl]);
 
   useEffect(() => {
     if (!embedUrl && !resolvedMediaUrl) return;
@@ -279,6 +299,12 @@ const WatchVideoStage: React.FC<{
         '{"event":"listening","id":"dramawin-watch-player"}',
         '*'
       );
+      if (muted) {
+        postYouTubeCommand(iframeRef.current, 'mute');
+      } else {
+        postYouTubeCommand(iframeRef.current, 'unMute');
+        postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+      }
     } catch {
       // Ignore cross-origin postMessage restrictions
     }
@@ -311,8 +337,17 @@ const WatchVideoStage: React.FC<{
           src={resolvedMediaUrl}
           controls
           autoPlay
+          muted={muted}
           playsInline
-          onPlay={() => onPlayingChangeRef.current?.(true)}
+          onLoadedMetadata={(e) => {
+            e.currentTarget.muted = muted;
+            e.currentTarget.volume = 1;
+          }}
+          onPlay={(e) => {
+            e.currentTarget.muted = muted;
+            e.currentTarget.volume = 1;
+            onPlayingChangeRef.current?.(true);
+          }}
           onPause={() => onPlayingChangeRef.current?.(false)}
           onEnded={() => {
             onPlayingChangeRef.current?.(false);
@@ -695,6 +730,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             episode={episode}
             zoomed={isZoomed}
             paused={rewardModalOpen}
+            muted={muted}
             resumePlaybackSignal={resumePlaybackSignal}
             onPlayingChange={(playing) => {
               if (!rewardModalOpenRef.current) {

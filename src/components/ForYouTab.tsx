@@ -59,10 +59,14 @@ const isDirectVideoMediaUrl = (url: string): boolean => {
   return /\.(mp4|webm|ogg|mov|m4v|m3u8)(\?|#|$)/i.test(url);
 };
 
-function postYouTubeCommand(iframe: HTMLIFrameElement | null, func: string) {
+function postYouTubeCommand(
+  iframe: HTMLIFrameElement | null,
+  func: string,
+  args: unknown[] = []
+) {
   try {
     iframe?.contentWindow?.postMessage(
-      JSON.stringify({ event: 'command', func, args: [] }),
+      JSON.stringify({ event: 'command', func, args }),
       '*'
     );
   } catch {
@@ -157,11 +161,15 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   useEffect(() => {
     if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
       postYouTubeCommand(iframeRef.current, muted ? 'mute' : 'unMute');
+      if (!muted) {
+        postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+      }
     }
     if (videoRef.current) {
       videoRef.current.muted = muted;
+      videoRef.current.volume = 1;
     }
-  }, [muted, embedUrl, resolvedMediaUrl]);
+  }, [muted, embedUrl, resolvedMediaUrl, currentEpisode?.id]);
 
   useEffect(() => {
     if (!embedUrl && !resolvedMediaUrl) return;
@@ -372,7 +380,12 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                     '{"event":"listening","id":"dramawin-foryou-player"}',
                     '*'
                   );
-                  if (muted) postYouTubeCommand(iframeRef.current, 'mute');
+                  if (muted) {
+                    postYouTubeCommand(iframeRef.current, 'mute');
+                  } else {
+                    postYouTubeCommand(iframeRef.current, 'unMute');
+                    postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+                  }
                   if (!isPlaying) postYouTubeCommand(iframeRef.current, 'pauseVideo');
                 } catch {
                   // Ignore cross-origin postMessage restrictions
@@ -392,7 +405,15 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               loop
               muted={muted}
               playsInline
-              onPlay={() => setIsPlaying(true)}
+              onLoadedMetadata={(e) => {
+                e.currentTarget.muted = muted;
+                e.currentTarget.volume = 1;
+              }}
+              onPlay={(e) => {
+                e.currentTarget.muted = muted;
+                e.currentTarget.volume = 1;
+                setIsPlaying(true);
+              }}
               onPause={() => setIsPlaying(false)}
               className="pointer-events-none w-full h-full object-cover"
             />

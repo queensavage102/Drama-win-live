@@ -10,6 +10,7 @@ import { ForYouTab } from './components/ForYouTab';
 import { MeTab } from './components/MeTab';
 import { MysteryRevealState, MysteryVaultCard } from './components/MysteryVaultCard';
 import { RealisticGoldCoin } from './components/RealisticGoldCoin';
+import { SupportChatWidget, SupportTicketSubmissionInput } from './components/SupportChatWidget';
 import { TopHeader } from './components/TopHeader';
 import { VipSplashScreen } from './components/VipSplashScreen';
 import { WatchTab } from './components/WatchTab';
@@ -19,6 +20,8 @@ import {
   DEFAULT_POOL_PRIZE_ZAR,
   DEFAULT_QUALIFICATION_THRESHOLD,
   DEFAULT_SPONSOR_URL,
+  R3_BOOST_ZAR,
+  R3_MYSTERY_CYCLE_ADS,
   STREAK_DAYS,
   getCurrentWeekKey,
   getMondayStartTimestampSAST,
@@ -30,6 +33,7 @@ import { CatalogProvider, useCatalog } from './context/CatalogContext';
 import { auth, googleProvider } from './firebase';
 import {
   adminAdjustPlayerCoins,
+  awardCloudR3BoostPrize,
   awardHeroBonusCoins,
   awardMysteryBoxCoins,
   awardWatchPotCoins,
@@ -39,17 +43,22 @@ import {
   markEpisodeAsWatched,
   mergeWatchedEpisodeId,
   purgeLegacyAndStrayEpisodesFromFirestore,
+  recordPrizeWinAndNotifyEmail,
   resetPlayerCoinsToZero,
+  submitSupportMessageAndNotifyEmail,
   subscribeAppConfig,
   subscribeLeaderboard,
   subscribeMysteryWinners,
   subscribePlayerPrivate,
+  subscribePrizeWins,
+  subscribeSupportMessages,
   subscribeTransactions,
   unlockAdminAccess,
   updateEmbeddedAdHtml,
   updateLiveTickerConfig,
   updateMysteryAndRolloverConfig,
   updateSponsorAdUrl,
+  updateSupportMessageStatus,
 } from './services/dramawinService';
 import {
   AppConfig,
@@ -59,28 +68,34 @@ import {
   LeaderboardPlayer,
   MysteryWinnerRecord,
   PlayerPrivate,
+  PrizeWinRecord,
+  SupportMessageRecord,
+  SupportStatus,
   ToastNotice,
   WeekDayKey,
 } from './types';
 import {
+  addLocalPrizeWin,
+  addLocalSupportMessage,
   applyLocalCoinMutation,
   claimLocalMysteryBox,
   getOrCreateGuestSession,
   loadLocalAppConfig,
   loadLocalLeaderboard,
   loadLocalMysteryWinners,
+  loadLocalPrizeWins,
+  loadLocalSupportMessages,
   loadLocalTransactions,
   loadMyListSeriesIds,
   mergeLeaderboardWithSeedPlayers,
-  resetLocalMysteryBoxes,
   resetLocalPlayerCoins,
   saveLocalAppConfig,
   toggleMyListSeriesId,
   updateLocalGuestUsername,
+  updateLocalSupportMessageStatus,
   upsertLocalLeaderboardPlayer,
 } from './utils/localState';
 import {
-  isSoundMuted,
   playCoinChime,
   playCoinPotCashChime,
   playVictoryFanfare,
@@ -96,7 +111,9 @@ function readCloudOpenedBoxes(uid: string, dateKey: string): number[] {
     const raw = window.localStorage.getItem(`${CLOUD_OPENED_BOXES_PREFIX}${uid}_${dateKey}`);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((n): n is number => typeof n === 'number') : [];
+    if (!Array.isArray(parsed)) return [];
+    const cleaned = parsed.filter((n): n is number => typeof n === 'number');
+    return cleaned.length >= R3_MYSTERY_CYCLE_ADS ? [] : cleaned;
   } catch {
     return [];
   }
@@ -119,6 +136,7 @@ function DramaWinApp() {
   const {
     episodes,
     sections,
+    cloudSeries,
     createSection,
     renameSection,
     deleteSection,
@@ -151,6 +169,14 @@ function DramaWinApp() {
   const [localTransactions, setLocalTransactions] = useState<CoinTransaction[]>(() =>
     loadLocalTransactions(initialSession.player.uid)
   );
+  const [cloudSupportMessages, setCloudSupportMessages] = useState<SupportMessageRecord[]>([]);
+  const [localSupportMessages, setLocalSupportMessages] = useState<SupportMessageRecord[]>(() =>
+    loadLocalSupportMessages()
+  );
+  const [cloudPrizeWins, setCloudPrizeWins] = useState<PrizeWinRecord[]>([]);
+  const [localPrizeWins, setLocalPrizeWins] = useState<PrizeWinRecord[]>(() =>
+    loadLocalPrizeWins()
+  );
 
   const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => isAdminPath());
   const [adminUnlocked, setAdminUnlocked] = useState<boolean>(() => {
@@ -173,7 +199,10 @@ function DramaWinApp() {
     newPoolPrizeZar?: number;
   } | null>(null);
 
-  const [muted, setMuted] = useState<boolean>(() => isSoundMuted());
+  const [muted, setMuted] = useState<boolean>(() => {
+    setSoundMuted(false);
+    return false;
+  });
   const [confettiActive, setConfettiActive] = useState(false);
   const [splashDone, setSplashDone] = useState<boolean>(() => isAdminPath());
   const [sponsorLoading, setSponsorLoading] = useState<{
@@ -184,7 +213,6 @@ function DramaWinApp() {
 
   const streakReminderShownRef = useRef<string | null>(null);
   const purgedStrayFirestoreRef = useRef<boolean>(false);
-  const mysteryResetTimerRef = useRef<number | null>(null);
   const cloudOpenedBoxesRef = useRef<number[]>(cloudOpenedBoxes);
   const sponsorFlowRef = useRef<{
     active: boolean;
@@ -201,14 +229,6 @@ function DramaWinApp() {
   useEffect(() => {
     cloudOpenedBoxesRef.current = cloudOpenedBoxes;
   }, [cloudOpenedBoxes]);
-
-  useEffect(() => {
-    return () => {
-      if (mysteryResetTimerRef.current !== null) {
-        window.clearTimeout(mysteryResetTimerRef.current);
-      }
-    };
-  }, []);
 
   const finishSponsorRewardFlow = useCallback(() => {
     const flow = sponsorFlowRef.current;
@@ -318,6 +338,32 @@ function DramaWinApp() {
     [isCloudMode, cloudTransactions, localTransactions]
   );
 
+  const supportMessages: SupportMessageRecord[] = useMemo(() => {
+    const merged = new Map<string, SupportMessageRecord>();
+    cloudSupportMessages.forEach((m) => merged.set(m.id, m));
+    localSupportMessages.forEach((m) => {
+      if (!merged.has(m.id)) merged.set(m.id, m);
+    });
+    return Array.from(merged.values()).sort((a, b) => {
+      const tA = a.createdAt?.toMillis?.() || a.createdAtMs || 0;
+      const tB = b.createdAt?.toMillis?.() || b.createdAtMs || 0;
+      return tB - tA;
+    });
+  }, [cloudSupportMessages, localSupportMessages]);
+
+  const prizeWins: PrizeWinRecord[] = useMemo(() => {
+    const merged = new Map<string, PrizeWinRecord>();
+    cloudPrizeWins.forEach((w) => merged.set(w.id, w));
+    localPrizeWins.forEach((w) => {
+      if (!merged.has(w.id)) merged.set(w.id, w);
+    });
+    return Array.from(merged.values()).sort((a, b) => {
+      const tA = a.createdAt?.toMillis?.() || a.createdAtMs || 0;
+      const tB = b.createdAt?.toMillis?.() || b.createdAtMs || 0;
+      return tB - tA;
+    });
+  }, [cloudPrizeWins, localPrizeWins]);
+
   const latestStateRef = useRef({
     isCloudMode,
     firebaseUser,
@@ -398,11 +444,14 @@ function DramaWinApp() {
     []
   );
 
-  const handleToggleMute = () => {
-    const next = !muted;
-    setMuted(next);
-    setSoundMuted(next);
-  };
+  const handleToggleMute = useCallback(() => {
+    unlockAudioEngine();
+    setMuted((prev) => {
+      const next = !prev;
+      setSoundMuted(next);
+      return next;
+    });
+  }, []);
 
   // Always subscribe to public Firestore appConfig for ALL visitors (zero auth wall)
   useEffect(() => {
@@ -434,6 +483,8 @@ function DramaWinApp() {
         setCloudLeaderboard([]);
         setCloudWinners([]);
         setCloudTransactions([]);
+        setCloudSupportMessages([]);
+        setCloudPrizeWins([]);
         setCloudOpenedBoxes([]);
         return;
       }
@@ -463,9 +514,18 @@ function DramaWinApp() {
     const unsubWinners = adminUnlocked
       ? subscribeMysteryWinners(setCloudWinners, () => {})
       : () => {};
+    const unsubSupport = adminUnlocked
+      ? subscribeSupportMessages(setCloudSupportMessages, () => {})
+      : () => {};
+    const unsubPrizeWins = adminUnlocked
+      ? subscribePrizeWins(setCloudPrizeWins, () => {})
+      : () => {};
+
     if (!cloudPrivateProfile) {
       return () => {
         unsubWinners();
+        unsubSupport();
+        unsubPrizeWins();
       };
     }
 
@@ -480,6 +540,8 @@ function DramaWinApp() {
       unsubPrivate();
       unsubTransactions();
       unsubWinners();
+      unsubSupport();
+      unsubPrizeWins();
     };
   }, [firebaseUser, cloudPrivateProfile?.uid, adminUnlocked]);
 
@@ -589,39 +651,74 @@ function DramaWinApp() {
         muted: isMutedNow,
       } = latestStateRef.current;
 
-      const scheduleVaultAutoReset = (isCloudReset: boolean, uid?: string) => {
-        if (mysteryResetTimerRef.current !== null) {
-          window.clearTimeout(mysteryResetTimerRef.current);
-        }
-        mysteryResetTimerRef.current = window.setTimeout(() => {
-          mysteryResetTimerRef.current = null;
-          if (isCloudReset && uid) {
-            cloudOpenedBoxesRef.current = [];
-            setCloudOpenedBoxes([]);
-            writeCloudOpenedBoxes(uid, getTodayDateKey(), []);
-          } else {
-            setGuestPrivate((curr) => resetLocalMysteryBoxes(curr));
-          }
-          setMysteryReveal(null);
-        }, 4000);
-      };
-
       if (cloudNow && activeUser) {
-        const currentOpened = cloudOpenedBoxesRef.current;
-        if (currentOpened.includes(boxNumber) || currentOpened.length >= 11) {
+        const rawOpened = cloudOpenedBoxesRef.current;
+        const currentOpened = rawOpened.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawOpened;
+        if (currentOpened.includes(boxNumber)) {
           return;
         }
 
-        const nextOpened = Array.from(new Set([...currentOpened, boxNumber]));
-        cloudOpenedBoxesRef.current = nextOpened;
-        setCloudOpenedBoxes(nextOpened);
-        writeCloudOpenedBoxes(activeUser.uid, todayKey, nextOpened);
+        const nextOpenedRaw = Array.from(new Set([...currentOpened, boxNumber]));
+        const is11thBoxJackpot = nextOpenedRaw.length >= R3_MYSTERY_CYCLE_ADS;
+        // Auto-reset immediately back to Box #1 on the 11th video ad so the cycle can repeat endlessly
+        const persistedOpened = is11thBoxJackpot ? [] : nextOpenedRaw;
+        cloudOpenedBoxesRef.current = persistedOpened;
+        setCloudOpenedBoxes(persistedOpened);
+        writeCloudOpenedBoxes(activeUser.uid, todayKey, persistedOpened);
 
-        const is11thBoxJackpot = nextOpened.length === 11;
-        const isOopsPick = !is11thBoxJackpot && currentOpened.length >= 1 && Math.random() < 0.3;
+        const targetUsername = (latestCfg.r5WinnerUsername || '').trim().toLowerCase();
+        const isNamedWinner =
+          targetUsername.length > 0 &&
+          player.username.trim().toLowerCase() === targetUsername;
+        const isR3Winner = Boolean(latestCfg.nextPickWinsR5) || isNamedWinner;
+
+        const isOopsPick =
+          !isR3Winner &&
+          !is11thBoxJackpot &&
+          currentOpened.length >= 1 &&
+          Math.random() < 0.3;
         const threshold = latestCfg.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
 
-        if (is11thBoxJackpot) {
+        if (isR3Winner) {
+          setMysteryReveal({
+            dateKey: todayKey,
+            boxNumber,
+            kind: 'airtime',
+            coins: 1000,
+          });
+          setConfettiActive(true);
+          playCoinPotCashChime(isMutedNow);
+          playVictoryFanfare(isMutedNow);
+          showToast(
+            `YOU WON CONGRATULATIONS! 🎉 R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) unlocked!`
+          );
+          void awardCloudR3BoostPrize(player, priv, boxNumber, latestCfg)
+            .then(({ winnerRecord, newPoolPrizeZar }) => {
+              setMysteryVoucherModal({
+                winner: winnerRecord,
+                newPoolPrizeZar,
+              });
+              setLocalPrizeWins(
+                addLocalPrizeWin({
+                  id: winnerRecord.id,
+                  uid: player.uid,
+                  createdByUid: activeUser.uid,
+                  username: player.username,
+                  contact: priv.contact,
+                  prizeType: 'mystery_r3_boost',
+                  amountZar: R3_BOOST_ZAR,
+                  coinsAwarded: 1000,
+                  voucherCode: winnerRecord.voucherCode,
+                  boxNumber,
+                  weekKey: getCurrentWeekKey(),
+                  summary: `Box #${boxNumber} R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) — Voucher ${winnerRecord.voucherCode}`,
+                  status: 'recorded',
+                  createdAtMs: Date.now(),
+                })
+              );
+            })
+            .catch(() => {});
+        } else if (is11thBoxJackpot) {
           setMysteryReveal({
             dateKey: todayKey,
             boxNumber,
@@ -632,10 +729,9 @@ function DramaWinApp() {
           playCoinPotCashChime(isMutedNow);
           playVictoryFanfare(isMutedNow);
           showToast(
-            '🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁',
+            `🎉 11th Ad Complete! R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins)! Grid reset to Box #1 — repeat to earn more!`,
             1000
           );
-          scheduleVaultAutoReset(true, activeUser.uid);
           void awardMysteryBoxCoins(
             player,
             priv,
@@ -644,6 +740,18 @@ function DramaWinApp() {
             threshold,
             true
           ).catch(() => {});
+          const summary = `11th Ad Complete — R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Bonus Coins) Unlocked on Box #${boxNumber}`;
+          void recordPrizeWinAndNotifyEmail({
+            uid: player.uid,
+            username: player.username,
+            contact: priv.contact,
+            prizeType: 'mystery_11th_jackpot',
+            amountZar: R3_BOOST_ZAR,
+            coinsAwarded: 1000,
+            boxNumber,
+            weekKey: getCurrentWeekKey(),
+            summary,
+          }).catch(() => {});
         } else if (isOopsPick) {
           setMysteryReveal({
             dateKey: todayKey,
@@ -702,11 +810,27 @@ function DramaWinApp() {
           setConfettiActive(true);
           playCoinPotCashChime(isMutedNow);
           playVictoryFanfare(isMutedNow);
+          setLocalPrizeWins(
+            addLocalPrizeWin({
+              id: `pw-loc-${Date.now()}`,
+              uid: player.uid,
+              createdByUid: player.uid,
+              username: player.username,
+              contact: priv.contact,
+              prizeType: 'mystery_11th_jackpot',
+              amountZar: R3_BOOST_ZAR,
+              coinsAwarded: 1000,
+              boxNumber,
+              weekKey: getCurrentWeekKey(),
+              summary: `11th Ad Complete — R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) on Box #${boxNumber}`,
+              status: 'recorded',
+              createdAtMs: Date.now(),
+            })
+          );
           showToast(
-            '🎉 JACKPOT! You unlocked the Mystery Gift! +1,000 Bonus Coins! 🎁',
+            `🎉 11th Ad Complete! R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins)! Grid reset to Box #1 — repeat to earn more!`,
             1000
           );
-          scheduleVaultAutoReset(false);
         } else if (result.outcome.kind === 'oops') {
           showToast('Oops, sorry try next box 🥲', undefined, 'neutral');
         } else if (result.outcome.kind === 'coins') {
@@ -719,11 +843,31 @@ function DramaWinApp() {
           setConfettiActive(true);
           playCoinChime(isMutedNow);
           playVictoryFanfare(isMutedNow);
+          setLocalPrizeWins(
+            addLocalPrizeWin({
+              id: result.winnerRecord.id,
+              uid: player.uid,
+              createdByUid: player.uid,
+              username: result.winnerRecord.username,
+              contact: result.winnerRecord.contact,
+              prizeType: 'mystery_r3_boost',
+              amountZar: R3_BOOST_ZAR,
+              coinsAwarded: result.outcome.coins,
+              voucherCode: result.winnerRecord.voucherCode,
+              boxNumber,
+              weekKey: getCurrentWeekKey(),
+              summary: `Box #${boxNumber} R${R3_BOOST_ZAR} Progress Bar Boost — Voucher ${result.winnerRecord.voucherCode}`,
+              status: 'recorded',
+              createdAtMs: Date.now(),
+            })
+          );
           setMysteryVoucherModal({
             winner: result.winnerRecord,
             newPoolPrizeZar: result.newPoolPrizeZar,
           });
-          showToast('YOU WON CONGRATULATIONS! 🎉 R5 Airtime unlocked!');
+          showToast(
+            `YOU WON CONGRATULATIONS! 🎉 R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) unlocked!`
+          );
         }
       } catch (err) {
         showToast(
@@ -748,13 +892,14 @@ function DramaWinApp() {
     }
 
     const todayKey = getTodayDateKey();
-    const openedToday = isCloudMode
+    const rawOpened = isCloudMode
       ? cloudOpenedBoxes
       : privateProfile.openedMysteryBoxesDate === todayKey
         ? privateProfile.openedMysteryBoxesToday || []
         : [];
+    const openedToday = rawOpened.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawOpened;
 
-    if (openedToday.includes(boxNumber) || openedToday.length >= 11) {
+    if (openedToday.includes(boxNumber)) {
       return;
     }
 
@@ -773,15 +918,12 @@ function DramaWinApp() {
     }
 
     const todayKey = getTodayDateKey();
-    const openedToday = isCloudMode
+    const rawOpened = isCloudMode
       ? cloudOpenedBoxes
       : privateProfile.openedMysteryBoxesDate === todayKey
         ? privateProfile.openedMysteryBoxesToday || []
         : [];
-
-    if (openedToday.length >= 11) {
-      return;
-    }
+    const openedToday = rawOpened.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawOpened;
 
     const targetBox =
       Array.from({ length: 12 }, (_, idx) => idx + 1).find((n) => !openedToday.includes(n)) ?? 1;
@@ -793,6 +935,42 @@ function DramaWinApp() {
     });
     setPendingGiftBoxNumber(targetBox);
   };
+
+  const handleDismissGiftVaultModal = useCallback(() => {
+    const isMysteryAdActive =
+      pendingGiftBoxNumber !== null && sponsorFlowRef.current.active;
+
+    if (isMysteryAdActive) {
+      sponsorFlowRef.current.active = false;
+      sponsorFlowRef.current.startedAt = 0;
+      sponsorFlowRef.current.leftApp = false;
+      sponsorFlowRef.current.rewardAction = null;
+      setSponsorLoading(null);
+      setPendingGiftBoxNumber(null);
+      setGiftVaultModalOpen(false);
+      showToast(
+        'Oops! Sorry, you closed the ad early. Watch the full ad to claim your reward.',
+        undefined,
+        'error',
+        undefined,
+        4500
+      );
+      return;
+    }
+
+    setGiftVaultModalOpen(false);
+  }, [pendingGiftBoxNumber, showToast]);
+
+  useEffect(() => {
+    if (!giftVaultModalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleDismissGiftVaultModal();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [giftVaultModalOpen, handleDismissGiftVaultModal]);
 
   const handleCompleteDailyCheckIn = async (dayKey: WeekDayKey, reward: number) => {
     const currentWeek = getCurrentWeekKey();
@@ -1189,13 +1367,39 @@ function DramaWinApp() {
       const p1 = Math.round(currentPool * 0.5);
       const p2 = Math.round(currentPool * 0.3);
       const p3 = Math.round(currentPool * 0.2);
+      const weekKey = getCurrentWeekKey();
       const summary = `1st: ${first.username} (R${p1}) · 2nd: ${second.username} (R${p2}) · 3rd: ${third.username} (R${p3})`;
+
+      const topWinners = [
+        { player: first, rank: 1, prizeZar: p1 },
+        { player: second, rank: 2, prizeZar: p2 },
+        { player: third, rank: 3, prizeZar: p3 },
+      ];
+      topWinners.forEach(({ player: w, rank, prizeZar }) => {
+        setLocalPrizeWins(
+          addLocalPrizeWin({
+            id: `pw-loc-pool-${Date.now()}-${rank}`,
+            uid: w.uid,
+            createdByUid: guestPlayer.uid,
+            username: w.username,
+            prizeType: 'sunday_pool',
+            amountZar: prizeZar,
+            coinsAwarded: 0,
+            rank,
+            weekKey,
+            summary: `Sunday Pool #${rank} Place — R${prizeZar} (${w.username})`,
+            status: 'recorded',
+            createdAtMs: Date.now(),
+          })
+        );
+      });
+
       setLocalAppConfig(
         saveLocalAppConfig({
           ...appConfig,
           poolPrizeZar: DEFAULT_POOL_PRIZE_ZAR,
           rolloverAmountZar: 0,
-          poolWeekKey: getCurrentWeekKey(),
+          poolWeekKey: weekKey,
           weekStartTimestamp: getMondayStartTimestampSAST(),
           lastPoolWinnerSummary: summary,
           lastWinnerUids: [first.uid, second.uid, third.uid],
@@ -1279,6 +1483,65 @@ function DramaWinApp() {
     }
   };
 
+  const handleSignInWithGoogleForSupport = useCallback(async () => {
+    const cred = await signInWithPopup(auth, googleProvider);
+    setFirebaseUser(cred.user);
+  }, []);
+
+  const handleSubmitSupportTicket = useCallback(
+    async (
+      input: SupportTicketSubmissionInput
+    ): Promise<{ id: string; syncedToCloud: boolean }> => {
+      const activeUser = firebaseUser || auth.currentUser;
+      const nowMs = Date.now();
+      let ticketId = `msg-loc-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
+      let syncedToCloud = false;
+
+      if (activeUser) {
+        ticketId = await submitSupportMessageAndNotifyEmail({
+          uid: activeUser.uid,
+          username: input.username,
+          contact: input.contact,
+          category: input.category,
+          subject: input.subject,
+          message: input.message,
+        });
+        syncedToCloud = true;
+      }
+
+      const localRecord: SupportMessageRecord = {
+        id: ticketId,
+        uid: activeUser?.uid || currentPlayer.uid,
+        username: input.username,
+        contact: input.contact,
+        category: input.category,
+        subject: input.subject,
+        message: input.message,
+        status: 'open',
+        source: syncedToCloud ? 'cloud' : 'local',
+        createdAtMs: nowMs,
+        updatedAtMs: nowMs,
+      };
+      setLocalSupportMessages(addLocalSupportMessage(localRecord));
+      return { id: ticketId, syncedToCloud };
+    },
+    [firebaseUser, currentPlayer.uid]
+  );
+
+  const handleResolveSupportMessage = useCallback(
+    async (
+      msg: SupportMessageRecord,
+      status: SupportStatus,
+      adminNote?: string
+    ): Promise<void> => {
+      setLocalSupportMessages(updateLocalSupportMessageStatus(msg.id, status, adminNote));
+      if (msg.source === 'cloud' && (firebaseUser || auth.currentUser)) {
+        await updateSupportMessageStatus(msg.id, status, adminNote);
+      }
+    },
+    [firebaseUser]
+  );
+
   if (isAdminRoute) {
     return (
       <AdminBoardPage
@@ -1289,6 +1552,8 @@ function DramaWinApp() {
         episodes={episodes}
         players={leaderboard}
         mysteryWinners={mysteryWinners}
+        supportMessages={supportMessages}
+        prizeWins={prizeWins}
         onBackToApp={navigateToApp}
         onUnlock={handleUnlockAdmin}
         onConnectFirebaseAdmin={handleConnectFirebaseAdmin}
@@ -1307,13 +1572,18 @@ function DramaWinApp() {
         onReorderSeries={reorderSeries}
         onRestoreDefaultEpisodes={handleRestoreDefaultEpisodes}
         onAdjustPlayerCoins={handleAdjustPlayerCoins}
+        onResolveSupportMessage={handleResolveSupportMessage}
       />
     );
   }
 
   const pendingGiftBox =
     pendingGiftBoxNumber !== null && sponsorLoading
-      ? { boxNumber: pendingGiftBoxNumber, secondsLeft: sponsorLoading.secondsLeft }
+      ? {
+          boxNumber: pendingGiftBoxNumber,
+          secondsLeft: sponsorLoading.secondsLeft,
+          progress: sponsorLoading.progress,
+        }
       : null;
 
   return (
@@ -1325,8 +1595,8 @@ function DramaWinApp() {
         onComplete={() => setConfettiActive(false)}
       />
 
-      {/* Global 20-Second Top Ad Progress Line (Highest Z-Index above all screens/modals) */}
-      {sponsorLoading && (
+      {/* Global 20-Second Top Ad Progress Line (Hidden while Mystery Vault handles its own in-modal progress bar) */}
+      {sponsorLoading && pendingGiftBoxNumber === null && (
         <>
           <div className="fixed top-0 left-0 right-0 h-1.5 z-[9999] bg-black/45 pointer-events-none">
             <div
@@ -1423,6 +1693,7 @@ function DramaWinApp() {
           <WatchTab
             sections={sections}
             episodes={episodes}
+            cloudSeries={cloudSeries}
             privateState={privateProfile}
             sponsorAdUrl={appConfig.sponsorAdUrl}
             playerWeeklyCoins={currentPlayer.weeklyCoins}
@@ -1512,6 +1783,20 @@ function DramaWinApp() {
         </footer>
       </main>
 
+      {/* Floating AI Support Assistant & Admin Help Widget */}
+      <SupportChatWidget
+        username={currentPlayer.username}
+        contact={privateProfile.contact}
+        coins={currentPlayer.coins}
+        weeklyCoins={currentPlayer.weeklyCoins}
+        qualificationThreshold={qualificationThreshold}
+        poolPrizeZar={appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR}
+        isFirebaseSignedIn={Boolean(firebaseUser)}
+        firebaseEmail={firebaseUser?.email || null}
+        onSignInGoogle={handleSignInWithGoogleForSupport}
+        onSubmitSupportTicket={handleSubmitSupportTicket}
+      />
+
       {/* Fixed 4-Tab Bottom Navigation Bar */}
       <BottomNavBar activeTab={activeTab} onSelectTab={setActiveTab} />
 
@@ -1522,7 +1807,7 @@ function DramaWinApp() {
           role="dialog"
           aria-modal="true"
           aria-label="Secret Mystery Gift Vault"
-          onClick={() => setGiftVaultModalOpen(false)}
+          onClick={handleDismissGiftVaultModal}
         >
           <div
             className="relative w-full max-w-2xl my-auto"
@@ -1530,7 +1815,7 @@ function DramaWinApp() {
           >
             <button
               type="button"
-              onClick={() => setGiftVaultModalOpen(false)}
+              onClick={handleDismissGiftVaultModal}
               aria-label="Close Gift Box Vault"
               className="absolute -top-3 -right-2 z-20 min-h-[44px] min-w-[44px] rounded-full bg-[#18181f] border border-white/20 text-white hover:bg-zinc-800 flex items-center justify-center shadow-xl cursor-pointer"
             >

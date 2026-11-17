@@ -237,7 +237,7 @@
     },
     "MysteryWinner": {
       "title": "MysteryWinner",
-      "description": "R5 Airtime Mystery Vault winner record (contains player contact PII, restricted to owner and admin).",
+      "description": "R3 Progress Bar Boost Mystery Vault winner record (contains player contact PII, restricted to owner and admin).",
       "type": "object",
       "properties": {
         "uid": {
@@ -262,6 +262,106 @@
         "boxNumber",
         "createdAt"
       ]
+    },
+    "PrizeWin": {
+      "title": "PrizeWin",
+      "description": "Verified record of main prize / Sunday Pool payout / R3 Mystery Boost wins.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "contact": { "type": "string", "maxLength": 120 },
+        "prizeType": {
+          "type": "string",
+          "enum": ["sunday_pool", "mystery_r3_boost", "mystery_11th_jackpot"]
+        },
+        "amountZar": { "type": "number" },
+        "coinsAwarded": { "type": "number" },
+        "voucherCode": { "type": "string", "maxLength": 40 },
+        "boxNumber": { "type": "number" },
+        "rank": { "type": "number" },
+        "weekKey": { "type": "string", "maxLength": 16 },
+        "summary": { "type": "string", "minLength": 2, "maxLength": 300 },
+        "status": { "type": "string", "enum": ["recorded", "paid"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "createdByUid",
+        "username",
+        "prizeType",
+        "amountZar",
+        "coinsAwarded",
+        "summary",
+        "status",
+        "createdAt"
+      ]
+    },
+    "SupportMessage": {
+      "title": "SupportMessage",
+      "description": "Player support message, feedback, or prize claim help ticket submitted via Support Chat Widget.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "contact": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "category": {
+          "type": "string",
+          "enum": ["claim_prize", "coins", "mystery_box", "sunday_pool", "feedback", "other"]
+        },
+        "subject": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "message": { "type": "string", "minLength": 2, "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["open", "resolved"] },
+        "adminNote": { "type": "string", "maxLength": 500 },
+        "resolvedBy": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "username",
+        "contact",
+        "category",
+        "subject",
+        "message",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MailNotification": {
+      "title": "MailNotification",
+      "description": "Outbound email notification queued for Firebase Trigger Email from Firestore extension addressed to Admin Gmail.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "to": { "type": "array" },
+        "eventType": { "type": "string", "enum": ["prize_win", "support_message"] },
+        "message": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "to", "eventType", "message", "createdAt"]
     },
     "AdminRecord": {
       "title": "AdminRecord",
@@ -330,7 +430,19 @@
     },
     "/mysteryWinners/{winnerId}": {
       "schema": { "$ref": "#/entities/MysteryWinner" },
-      "description": "Log of R5 Airtime Mystery Vault winners."
+      "description": "Log of R3 Progress Bar Boost Mystery Vault winners."
+    },
+    "/prize_wins/{winId}": {
+      "schema": { "$ref": "#/entities/PrizeWin" },
+      "description": "Permanent record of Sunday Pool payouts and R3 Mystery Vault prize wins."
+    },
+    "/support_messages/{messageId}": {
+      "schema": { "$ref": "#/entities/SupportMessage" },
+      "description": "Player support inquiries, feedback, and prize claim help messages managed in Admin Studio."
+    },
+    "/mail/{mailId}": {
+      "schema": { "$ref": "#/entities/MailNotification" },
+      "description": "Email notifications queued for Firebase Trigger Email from Firestore extension addressed to Admin Gmail."
     },
     "/admins/{uid}": {
       "schema": { "$ref": "#/entities/AdminRecord" },

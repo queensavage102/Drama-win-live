@@ -157,8 +157,58 @@ service cloud.firestore {
         && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
         && data.contact is string && data.contact.size() >= 4 && data.contact.size() <= 120
         && data.voucherCode is string && data.voucherCode.size() >= 4 && data.voucherCode.size() <= 32
-        && data.amountZar is number && data.amountZar == 5
+        && data.amountZar is number && (data.amountZar == 3 || data.amountZar == 5)
         && data.boxNumber is number && data.boxNumber >= 1 && data.boxNumber <= 12
+        && data.createdAt is timestamp;
+    }
+
+    function isValidPrizeWin(data) {
+      return data.keys().hasAll(['uid', 'createdByUid', 'username', 'prizeType', 'amountZar', 'coinsAwarded', 'summary', 'status', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'createdByUid', 'username', 'contact', 'prizeType', 'amountZar', 'coinsAwarded', 'voucherCode', 'boxNumber', 'rank', 'weekKey', 'summary', 'status', 'createdAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 && data.createdByUid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
+        && (!('contact' in data) || (data.contact is string && data.contact.size() <= 120))
+        && data.prizeType in ['sunday_pool', 'mystery_r3_boost', 'mystery_11th_jackpot']
+        && data.amountZar is number && data.amountZar >= 0 && data.amountZar <= 1000000
+        && data.coinsAwarded is number && data.coinsAwarded >= 0 && data.coinsAwarded <= 1000000
+        && (!('voucherCode' in data) || (data.voucherCode is string && data.voucherCode.size() <= 40))
+        && (!('boxNumber' in data) || (data.boxNumber is number && data.boxNumber >= 0 && data.boxNumber <= 12))
+        && (!('rank' in data) || (data.rank is number && data.rank >= 0 && data.rank <= 10))
+        && (!('weekKey' in data) || (data.weekKey is string && data.weekKey.size() <= 16))
+        && data.summary is string && data.summary.size() >= 2 && data.summary.size() <= 300
+        && data.status in ['recorded', 'paid']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSupportMessage(data) {
+      return data.keys().hasAll(['uid', 'username', 'contact', 'category', 'subject', 'message', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'username', 'contact', 'category', 'subject', 'message', 'status', 'adminNote', 'resolvedBy', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 40
+        && data.contact is string && data.contact.size() >= 2 && data.contact.size() <= 120
+        && data.category in ['claim_prize', 'coins', 'mystery_box', 'sunday_pool', 'feedback', 'other']
+        && data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 120
+        && data.message is string && data.message.size() >= 2 && data.message.size() <= 2000
+        && data.status in ['open', 'resolved']
+        && (!('adminNote' in data) || (data.adminNote is string && data.adminNote.size() <= 500))
+        && (!('resolvedBy' in data) || (data.resolvedBy is string && data.resolvedBy.size() <= 120))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMailNotification(data) {
+      return data.keys().hasAll(['uid', 'to', 'eventType', 'message', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'to', 'eventType', 'message', 'createdAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.to is list && data.to.size() == 1 && data.to[0] == 'gerinaicker04@gmail.com'
+        && data.eventType in ['prize_win', 'support_message']
+        && data.message is map
+        && data.message.keys().hasAll(['subject', 'text', 'html'])
+        && data.message.keys().hasOnly(['subject', 'text', 'html'])
+        && data.message.subject is string && data.message.subject.size() >= 2 && data.message.subject.size() <= 200
+        && data.message.text is string && data.message.text.size() >= 2 && data.message.text.size() <= 5000
+        && data.message.html is string && data.message.html.size() >= 2 && data.message.html.size() <= 10000
         && data.createdAt is timestamp;
     }
 
@@ -323,7 +373,7 @@ service cloud.firestore {
             isVerified()
             && configId == 'global'
             && incoming().diff(existing()).affectedKeys().hasOnly(['poolPrizeZar', 'r5WinnerUsername', 'nextPickWinsR5', 'updatedAt'])
-            && incoming().poolPrizeZar == existing().poolPrizeZar + 5
+            && (incoming().poolPrizeZar == existing().poolPrizeZar + 3 || incoming().poolPrizeZar == existing().poolPrizeZar + 5)
             && incoming().r5WinnerUsername == ''
             && incoming().nextPickWinsR5 == false
             && (
@@ -340,7 +390,7 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // R5 Mystery Vault winners (contains PII contact; owner or admin only)
+    // R3 Progress Bar Boost Mystery Vault winners (contains PII contact; owner or admin only)
     match /mysteryWinners/{winnerId} {
       allow get: if isValidId(winnerId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid));
       allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
@@ -351,6 +401,63 @@ service cloud.firestore {
         && incoming().uid == request.auth.uid
         && incoming().createdAt == request.time;
       allow update, delete: if isAdmin() && isValidId(winnerId);
+    }
+
+    // Main Prize & Sunday Pool payout wins (owner or admin only)
+    match /prize_wins/{winId} {
+      allow get: if isValidId(winId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && isVerified()
+        && isValidId(winId)
+        && isValidPrizeWin(incoming())
+        && incoming().createdAt == request.time
+        && (
+          isAdmin() ||
+          (incoming().uid == request.auth.uid && incoming().createdByUid == request.auth.uid && incoming().status == 'recorded')
+        );
+      allow update: if isAdmin()
+        && isValidId(winId)
+        && isValidPrizeWin(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'summary']);
+      allow delete: if isAdmin() && isValidId(winId);
+    }
+
+    // Player support messages & Claim Prize Help tickets (owner or admin only)
+    match /support_messages/{messageId} {
+      allow get: if isValidId(messageId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && isVerified()
+        && isValidId(messageId)
+        && isValidSupportMessage(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(messageId)
+        && isValidSupportMessage(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminNote', 'resolvedBy', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(messageId);
+    }
+
+    // Outbound Trigger Email queue addressed strictly to Admin Gmail
+    match /mail/{mailId} {
+      allow get: if isValidId(mailId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedIn()
+        && isVerified()
+        && isValidId(mailId)
+        && isValidMailNotification(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
     }
 
     // Admin Studio access grants

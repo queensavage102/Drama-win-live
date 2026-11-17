@@ -96,4 +96,20 @@ export const DIRTY_DOZEN_CASES = [
     payload: { role: 'admin', passcode: 'wrong_pass' },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    name: '13. Third-Party Mail Relay Spoofing on /mail',
+    path: 'mail/mail_hack',
+    operation: 'create',
+    auth: { uid: 'userA', email_verified: true },
+    payload: { uid: 'userA', to: ['victim@example.com'], eventType: 'support_message', message: { subject: 'Spam', text: 'Spam', html: '<p>Spam</p>' } },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '14. Non-Admin Resolving Support Message',
+    path: 'support_messages/msg_1',
+    operation: 'update',
+    auth: { uid: 'userA', email_verified: true },
+    payload: { status: 'resolved' },
+    expected: 'PERMISSION_DENIED',
+  },
 ] as const;

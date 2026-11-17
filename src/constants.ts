@@ -4,6 +4,7 @@ export const BRAND_NAME = 'DRAMA WIN TORNEMENT';
 export const DEFAULT_SPONSOR_URL = 'https://directyp.org/4/4edba239bcd7c2593952b6466d0c92ed';
 
 export const ADMIN_PASSCODE = 'Gideon_123';
+export const ADMIN_NOTIFICATION_EMAIL = 'gerinaicker04@gmail.com';
 export const DEFAULT_POOL_PRIZE_ZAR = 50;
 export const DEFAULT_POOL_TARGET_COINS = 500000;
 export const DEFAULT_QUALIFICATION_THRESHOLD = 500000;
@@ -19,6 +20,8 @@ export const COIN_POT_MIN_COINS = 100;
 export const COIN_POT_MAX_COINS = 300;
 export const DEFAULT_VIDEO_START_SECONDS = 28;
 export const MYSTERY_ENTRY_COST = 250;
+export const R3_MYSTERY_CYCLE_ADS = 11;
+export const R3_BOOST_ZAR = 3;
 export const DEFAULT_REAL_AD_SCRIPT = `<script>
   atOptions = {
       'key' : 'c56306a7ff730db6775be12acff0f104',
@@ -695,15 +698,18 @@ export function getYouTubeThumbnailUrl(rawUrl: string): string | null {
 }
 
 
-  export function getYouTubeEmbedUrl(rawUrl: string, startSeconds?: number): string | null {
+export function getYouTubeEmbedUrl(
+  rawUrl: string,
+  startSeconds?: number,
+  muted = false
+): string | null {
   const rawEmbed = extractYouTubeMedia(rawUrl).embedUrl;
   if (!rawEmbed) return null;
 
   let finalUrl = rawEmbed.replace(
-  'https://www.youtube-nocookie.com',
-  'https://www.youtube.com'
-);
-
+    'https://www.youtube-nocookie.com',
+    'https://www.youtube.com'
+  );
 
   const appendParam = (url: string, key: string, value: string) => {
     if (new RegExp(`[?&]${key}=`).test(url)) return url;
@@ -713,7 +719,7 @@ export function getYouTubeThumbnailUrl(rawUrl: string): string | null {
 
   finalUrl = appendParam(finalUrl, 'playsinline', '1');
   finalUrl = appendParam(finalUrl, 'enablejsapi', '1');
-  finalUrl = appendParam(finalUrl, 'mute', '1');
+  finalUrl = appendParam(finalUrl, 'mute', muted ? '1' : '0');
 
   if (typeof window !== 'undefined' && window.location?.origin) {
     finalUrl = appendParam(finalUrl, 'origin', encodeURIComponent(window.location.origin));

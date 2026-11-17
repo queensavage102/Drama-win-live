@@ -17,6 +17,8 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import {
+  ADMIN_NOTIFICATION_EMAIL,
+  ADMIN_PASSCODE,
   CURATED_DEFAULT_EPISODES,
   DEFAULT_LIVE_TICKER_NAMES,
   DEFAULT_POOL_PRIZE_ZAR,
@@ -24,9 +26,9 @@ import {
   DEFAULT_QUALIFICATION_THRESHOLD,
   DEFAULT_SPONSOR_URL,
   DEFAULT_VIDEO_START_SECONDS,
-  ADMIN_PASSCODE,
   LEGACY_PLACEHOLDER_EPISODE_IDS,
   MYSTERY_ENTRY_COST,
+  R3_BOOST_ZAR,
   deduplicateEpisodeList,
   forceSaveDefaultEpisodesToLocalStorage,
   getCanonicalVideoKey,
@@ -41,7 +43,7 @@ import {
   sanitizeExternalUrl,
   toSeriesId,
 } from '../constants';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import {
   AppConfig,
   CoinTransaction,
@@ -50,6 +52,11 @@ import {
   LeaderboardPlayer,
   MysteryWinnerRecord,
   PlayerPrivate,
+  PrizeWinRecord,
+  PrizeWinType,
+  SupportCategory,
+  SupportMessageRecord,
+  SupportStatus,
   TransactionCategory,
   WeekDayKey,
 } from '../types';
@@ -772,10 +779,181 @@ export async function awardMysteryBoxCoins(
     {
       category: 'mystery-box',
       title: isJackpot
-        ? `Mystery Box #${boxNumber} — 11th Box Jackpot`
+        ? `Mystery Box #${boxNumber} — 11th Ad R3 Boost (+1,000 Coins)`
         : `Mystery Box #${boxNumber} Bonus`,
     }
   );
+}
+
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildMailPayload(params: {
+  uid: string;
+  eventType: 'prize_win' | 'support_message';
+  subject: string;
+  text: string;
+  html: string;
+}) {
+  return {
+    uid: params.uid.slice(0, 128),
+    to: [ADMIN_NOTIFICATION_EMAIL],
+    eventType: params.eventType,
+    message: {
+      subject: params.subject.trim().slice(0, 200),
+      text: params.text.trim().slice(0, 5000),
+      html: params.html.trim().slice(0, 10000),
+    },
+    createdAt: serverTimestamp(),
+  };
+}
+
+export async function awardCloudR3BoostPrize(
+  player: LeaderboardPlayer,
+  privateState: PlayerPrivate,
+  boxNumber: number,
+  appConfig: AppConfig
+): Promise<{
+  winnerRecord: MysteryWinnerRecord;
+  newPoolPrizeZar: number;
+}> {
+  const todayKey = getTodayDateKey();
+  const threshold = appConfig.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
+  const boostCoins = 1000;
+  const newCoins = Math.max(0, player.coins + boostCoins);
+  const newWeekly = player.weeklyCoins + boostCoins;
+  const qualified = newWeekly >= threshold;
+  const voucherCode = `DW-R3-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  const winnerId = `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const prizeWinId = `pw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const mailId = `mail-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+  let basePool = appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR;
+  let configExists = false;
+  try {
+    const cfgSnap = await getDoc(doc(db, 'appConfig', 'global'));
+    if (cfgSnap.exists()) {
+      configExists = true;
+      const snapPool = cfgSnap.data()?.poolPrizeZar;
+      if (typeof snapPool === 'number') {
+        basePool = snapPool;
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, 'appConfig/global');
+  }
+
+  const newPoolPrizeZar = basePool + R3_BOOST_ZAR;
+  const batch = writeBatch(db);
+
+  batch.update(doc(db, 'leaderboard', player.uid), {
+    coins: newCoins,
+    weeklyCoins: newWeekly,
+    qualified,
+    streakCount: player.streakCount,
+    updatedAt: serverTimestamp(),
+  });
+  batch.update(doc(db, 'playerPrivate', player.uid), {
+    lastActivityDate: todayKey,
+    lastMysteryPickDate: '',
+    updatedAt: serverTimestamp(),
+  });
+  batch.set(doc(db, 'playerPrivate', player.uid, 'transactions', buildTransactionId('r3')), {
+    uid: player.uid,
+    type: 'earn',
+    category: 'mystery-box',
+    title: `Mystery Box #${boxNumber} — R3 Progress Bar Boost`,
+    amount: boostCoins,
+    balanceAfter: newCoins,
+    createdAt: serverTimestamp(),
+  });
+  batch.set(doc(db, 'mysteryWinners', winnerId), {
+    uid: player.uid,
+    username: player.username.slice(0, 32),
+    contact: (privateState.contact || 'Player').slice(0, 120),
+    voucherCode,
+    amountZar: R3_BOOST_ZAR,
+    boxNumber,
+    createdAt: serverTimestamp(),
+  });
+
+  if (configExists) {
+    batch.update(doc(db, 'appConfig', 'global'), {
+      poolPrizeZar: newPoolPrizeZar,
+      r5WinnerUsername: '',
+      nextPickWinsR5: false,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  const summary = `Box #${boxNumber} R3 Progress Bar Boost (+${boostCoins} Coins & R${R3_BOOST_ZAR} Boost) — Voucher ${voucherCode}`;
+  batch.set(doc(db, 'prize_wins', prizeWinId), {
+    uid: player.uid,
+    createdByUid: player.uid,
+    username: player.username.slice(0, 32),
+    contact: (privateState.contact || 'Player').slice(0, 120),
+    prizeType: 'mystery_r3_boost',
+    amountZar: R3_BOOST_ZAR,
+    coinsAwarded: boostCoins,
+    voucherCode,
+    boxNumber,
+    weekKey: getCurrentWeekKey(),
+    summary,
+    status: 'recorded',
+    createdAt: serverTimestamp(),
+  });
+
+  const subject = `[DramaWin Prize Win] ${player.username} unlocked R${R3_BOOST_ZAR} Progress Bar Boost (${voucherCode})`;
+  const text = [
+    `Player: ${player.username} (UID: ${player.uid})`,
+    `Contact: ${privateState.contact}`,
+    `Prize: R${R3_BOOST_ZAR} Progress Bar Boost + ${boostCoins} Bonus Coins`,
+    `Box Number: #${boxNumber}`,
+    `Voucher Code: ${voucherCode}`,
+    `Updated Sunday Pool: R${newPoolPrizeZar}`,
+  ].join('\n');
+  const html = `<h2>DramaWin R3 Progress Bar Boost Winner</h2>
+<p><strong>Player:</strong> ${escapeHtml(player.username)} (${escapeHtml(player.uid)})</p>
+<p><strong>Contact:</strong> ${escapeHtml(privateState.contact || 'N/A')}</p>
+<p><strong>Prize:</strong> R${R3_BOOST_ZAR} Progress Bar Boost + ${boostCoins} Bonus Coins</p>
+<p><strong>Box #:</strong> ${boxNumber} &middot; <strong>Voucher:</strong> <code>${escapeHtml(voucherCode)}</code></p>
+<p><strong>Updated Sunday Pool:</strong> R${newPoolPrizeZar}</p>`;
+
+  batch.set(
+    doc(db, 'mail', mailId),
+    buildMailPayload({
+      uid: player.uid,
+      eventType: 'prize_win',
+      subject,
+      text,
+      html,
+    })
+  );
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'prize_wins');
+  }
+
+  return {
+    winnerRecord: {
+      id: winnerId,
+      uid: player.uid,
+      username: player.username,
+      contact: privateState.contact,
+      voucherCode,
+      amountZar: R3_BOOST_ZAR,
+      boxNumber,
+    },
+    newPoolPrizeZar,
+  };
 }
 
 export async function claimMysteryBox(
@@ -790,10 +968,6 @@ export async function claimMysteryBox(
   winnerRecord?: MysteryWinnerRecord;
   newPoolPrizeZar?: number;
 }> {
-  const todayKey = getTodayDateKey();
-  if (privateState.lastMysteryPickDate === todayKey) {
-    throw new Error('You have already opened your Mystery Vault box today.');
-  }
   if (paidWithCoins && player.coins < MYSTERY_ENTRY_COST) {
     throw new Error(`You need at least ${MYSTERY_ENTRY_COST} Coins to unlock.`);
   }
@@ -802,16 +976,16 @@ export async function claimMysteryBox(
   const isNamedWinner =
     targetUsername.length > 0 &&
     player.username.trim().toLowerCase() === targetUsername;
-  const isR5Winner = Boolean(appConfig.nextPickWinsR5) || isNamedWinner;
+  const isR3Winner = Boolean(appConfig.nextPickWinsR5) || isNamedWinner;
 
   const coinRewards = [25, 50, 75, 100];
   const allBoxes: BoxOutcome[] = Array.from({ length: 12 }, (_, idx) => {
     const num = idx + 1;
-    if (isR5Winner && num === boxNumber) {
+    if (isR3Winner && num === boxNumber) {
       return {
         boxNumber: num,
         kind: 'airtime',
-        coins: 0,
+        coins: 1000,
       };
     }
     return {
@@ -827,7 +1001,7 @@ export async function claimMysteryBox(
   const weeklyGain = chosen.coins;
 
   const newCoins = Math.max(0, player.coins + Math.round(walletDelta));
-  const newWeekly = player.weeklyCoins + Math.max(0, Math.min(600, Math.round(weeklyGain)));
+  const newWeekly = player.weeklyCoins + Math.max(0, Math.min(1000, Math.round(weeklyGain)));
   const qualified = newWeekly >= appConfig.qualificationThreshold;
 
   const batch = writeBatch(db);
@@ -839,7 +1013,7 @@ export async function claimMysteryBox(
     updatedAt: serverTimestamp(),
   });
   batch.update(doc(db, 'playerPrivate', player.uid), {
-    lastMysteryPickDate: todayKey,
+    lastMysteryPickDate: '',
     updatedAt: serverTimestamp(),
   });
 
@@ -861,7 +1035,7 @@ export async function claimMysteryBox(
     category: 'mystery-box',
     title:
       chosen.kind === 'airtime'
-        ? `Mystery Box #${boxNumber} — R5 Airtime Win`
+        ? `Mystery Box #${boxNumber} — R3 Progress Bar Boost`
         : `Mystery Box #${boxNumber} Bonus`,
     amount: chosen.coins,
     balanceAfter: newCoins,
@@ -872,15 +1046,18 @@ export async function claimMysteryBox(
   let newPoolPrizeZar: number | undefined;
 
   if (chosen.kind === 'airtime') {
-    const voucherCode = `DW-R5-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const voucherCode = `DW-R3-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     chosen.voucherCode = voucherCode;
     const winnerId = `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const prizeWinId = `pw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const mailId = `mail-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
     batch.set(doc(db, 'mysteryWinners', winnerId), {
       uid: player.uid,
       username: player.username,
       contact: privateState.contact,
       voucherCode,
-      amountZar: 5,
+      amountZar: R3_BOOST_ZAR,
       boxNumber,
       createdAt: serverTimestamp(),
     });
@@ -894,7 +1071,7 @@ export async function claimMysteryBox(
         if (typeof snapPool === 'number') {
           basePool = snapPool;
         }
-        newPoolPrizeZar = basePool + 5;
+        newPoolPrizeZar = basePool + R3_BOOST_ZAR;
         batch.update(configRef, {
           poolPrizeZar: newPoolPrizeZar,
           r5WinnerUsername: '',
@@ -906,13 +1083,40 @@ export async function claimMysteryBox(
       handleFirestoreError(error, OperationType.GET, 'appConfig/global');
     }
 
+    batch.set(doc(db, 'prize_wins', prizeWinId), {
+      uid: player.uid,
+      createdByUid: player.uid,
+      username: player.username.slice(0, 32),
+      contact: (privateState.contact || 'Player').slice(0, 120),
+      prizeType: 'mystery_r3_boost',
+      amountZar: R3_BOOST_ZAR,
+      coinsAwarded: chosen.coins,
+      voucherCode,
+      boxNumber,
+      weekKey: getCurrentWeekKey(),
+      summary: `Box #${boxNumber} R3 Progress Bar Boost — Voucher ${voucherCode}`,
+      status: 'recorded',
+      createdAt: serverTimestamp(),
+    });
+
+    batch.set(
+      doc(db, 'mail', mailId),
+      buildMailPayload({
+        uid: player.uid,
+        eventType: 'prize_win',
+        subject: `[DramaWin Prize Win] ${player.username} won R${R3_BOOST_ZAR} Boost (${voucherCode})`,
+        text: `Player ${player.username} unlocked Box #${boxNumber} R3 Progress Bar Boost (${voucherCode}). Contact: ${privateState.contact}`,
+        html: `<h2>DramaWin R3 Progress Bar Boost Winner</h2><p><strong>Player:</strong> ${escapeHtml(player.username)}</p><p><strong>Voucher:</strong> <code>${escapeHtml(voucherCode)}</code></p><p><strong>Contact:</strong> ${escapeHtml(privateState.contact)}</p>`,
+      })
+    );
+
     winnerRecord = {
       id: winnerId,
       uid: player.uid,
       username: player.username,
       contact: privateState.contact,
       voucherCode,
-      amountZar: 5,
+      amountZar: R3_BOOST_ZAR,
       boxNumber,
     };
   }
@@ -1360,7 +1564,8 @@ export async function evaluateSundayPoolRollover(
     ]);
 
     try {
-      await setDoc(
+      const batch = writeBatch(db);
+      batch.set(
         doc(db, 'appConfig', 'global'),
         buildFullConfigPayload(currentConfig, {
           poolPrizeZar: DEFAULT_POOL_PRIZE_ZAR,
@@ -1371,6 +1576,56 @@ export async function evaluateSundayPoolRollover(
           lastWinnerUids: [first.uid, second.uid, third.uid],
         })
       );
+
+      const actorUid = auth.currentUser?.uid || first.uid;
+      const topWinners = [
+        { player: first, rank: 1, prizeZar: p1 },
+        { player: second, rank: 2, prizeZar: p2 },
+        { player: third, rank: 3, prizeZar: p3 },
+      ];
+
+      topWinners.forEach(({ player: winner, rank, prizeZar }) => {
+        const winId = `pw-pool-${Date.now()}-${rank}-${Math.random().toString(36).slice(2, 6)}`;
+        batch.set(doc(db, 'prize_wins', winId), {
+          uid: winner.uid,
+          createdByUid: actorUid,
+          username: winner.username.slice(0, 32),
+          prizeType: 'sunday_pool',
+          amountZar: prizeZar,
+          coinsAwarded: 0,
+          rank,
+          weekKey: nextWeekKey,
+          summary: `Sunday Pool #${rank} Place — R${prizeZar} (${winner.username})`,
+          status: 'recorded',
+          createdAt: serverTimestamp(),
+        });
+      });
+
+      const mailId = `mail-pool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      batch.set(
+        doc(db, 'mail', mailId),
+        buildMailPayload({
+          uid: actorUid,
+          eventType: 'prize_win',
+          subject: `[DramaWin Sunday Pool] R${currentPool} Payout Winners (${nextWeekKey})`,
+          text: [
+            `Sunday Prize Pool Payout Triggered (${nextWeekKey})`,
+            `Total Pool: R${currentPool}`,
+            `1st Place: ${first.username} (${first.uid}) — R${p1}`,
+            `2nd Place: ${second.username} (${second.uid}) — R${p2}`,
+            `3rd Place: ${third.username} (${third.uid}) — R${p3}`,
+          ].join('\n'),
+          html: `<h2>DramaWin Sunday Prize Pool Payout (${escapeHtml(nextWeekKey)})</h2>
+<p><strong>Total Pool:</strong> R${currentPool}</p>
+<ol>
+  <li><strong>${escapeHtml(first.username)}</strong> (${escapeHtml(first.uid)}) — <strong>R${p1}</strong></li>
+  <li><strong>${escapeHtml(second.username)}</strong> (${escapeHtml(second.uid)}) — <strong>R${p2}</strong></li>
+  <li><strong>${escapeHtml(third.username)}</strong> (${escapeHtml(third.uid)}) — <strong>R${p3}</strong></li>
+</ol>`,
+        })
+      );
+
+      await batch.commit();
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'appConfig/global');
     }
@@ -1788,6 +2043,245 @@ export async function resetPlayerCoinsToZero(uid: string): Promise<void> {
       qualified: false,
       updatedAt: serverTimestamp(),
     });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function recordPrizeWinAndNotifyEmail(params: {
+  uid: string;
+  username: string;
+  contact?: string;
+  prizeType: PrizeWinType;
+  amountZar: number;
+  coinsAwarded: number;
+  voucherCode?: string;
+  boxNumber?: number;
+  rank?: number;
+  weekKey?: string;
+  summary: string;
+}): Promise<string> {
+  const actorUid = auth.currentUser?.uid || params.uid;
+  const winId = `pw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const mailId = `mail-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const cleanSummary = params.summary.trim().slice(0, 300);
+
+  const winDoc: Record<string, unknown> = {
+    uid: params.uid.slice(0, 128),
+    createdByUid: actorUid.slice(0, 128),
+    username: params.username.trim().slice(0, 32) || 'Player',
+    prizeType: params.prizeType,
+    amountZar: Math.max(0, Math.round(params.amountZar)),
+    coinsAwarded: Math.max(0, Math.round(params.coinsAwarded)),
+    summary: cleanSummary,
+    status: 'recorded',
+    createdAt: serverTimestamp(),
+  };
+
+  if (params.contact) winDoc.contact = params.contact.trim().slice(0, 120);
+  if (params.voucherCode) winDoc.voucherCode = params.voucherCode.trim().slice(0, 40);
+  if (typeof params.boxNumber === 'number') winDoc.boxNumber = params.boxNumber;
+  if (typeof params.rank === 'number') winDoc.rank = params.rank;
+  if (params.weekKey) winDoc.weekKey = params.weekKey.trim().slice(0, 16);
+
+  const subject = `[DramaWin Prize Win] ${params.username} — ${cleanSummary}`.slice(0, 200);
+  const text = [
+    `DramaWin Prize Notification`,
+    `Player: ${params.username} (${params.uid})`,
+    params.contact ? `Contact: ${params.contact}` : '',
+    `Type: ${params.prizeType}`,
+    `Amount ZAR: R${Math.max(0, Math.round(params.amountZar))}`,
+    `Coins Awarded: ${Math.max(0, Math.round(params.coinsAwarded)).toLocaleString()}`,
+    params.voucherCode ? `Voucher Code: ${params.voucherCode}` : '',
+    `Summary: ${cleanSummary}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const html = `<h2>DramaWin Prize Win Notification</h2>
+<p><strong>Player:</strong> ${escapeHtml(params.username)} (${escapeHtml(params.uid)})</p>
+${params.contact ? `<p><strong>Contact:</strong> ${escapeHtml(params.contact)}</p>` : ''}
+<p><strong>Prize Type:</strong> ${escapeHtml(params.prizeType)}</p>
+<p><strong>Amount:</strong> R${Math.max(0, Math.round(params.amountZar))} &middot; <strong>Coins:</strong> ${Math.max(0, Math.round(params.coinsAwarded)).toLocaleString()}</p>
+${params.voucherCode ? `<p><strong>Voucher:</strong> <code>${escapeHtml(params.voucherCode)}</code></p>` : ''}
+<p><strong>Summary:</strong> ${escapeHtml(cleanSummary)}</p>`;
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'prize_wins', winId), winDoc);
+  batch.set(
+    doc(db, 'mail', mailId),
+    buildMailPayload({
+      uid: actorUid,
+      eventType: 'prize_win',
+      subject,
+      text,
+      html,
+    })
+  );
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `prize_wins/${winId}`);
+  }
+
+  return winId;
+}
+
+export async function submitSupportMessageAndNotifyEmail(params: {
+  uid: string;
+  username: string;
+  contact: string;
+  category: SupportCategory;
+  subject: string;
+  message: string;
+}): Promise<string> {
+  const actorUid = auth.currentUser?.uid;
+  if (!actorUid) {
+    throw new Error('Google sign-in required to sync support ticket to Firebase.');
+  }
+
+  const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const mailId = `mail-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  const cleanUsername = (params.username.trim() || 'Player').slice(0, 40);
+  const cleanContact = (params.contact.trim() || 'Not provided').slice(0, 120);
+  const cleanSubject = (params.subject.trim() || 'Player Support Request').slice(0, 120);
+  const cleanMessage = params.message.trim().slice(0, 2000);
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'support_messages', msgId), {
+    uid: actorUid,
+    username: cleanUsername.length >= 2 ? cleanUsername : 'Player',
+    contact: cleanContact.length >= 2 ? cleanContact : 'N/A',
+    category: params.category,
+    subject: cleanSubject.length >= 2 ? cleanSubject : 'Support Ticket',
+    message: cleanMessage,
+    status: 'open',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  const emailSubject = `[DramaWin Support - ${params.category}] ${cleanSubject}`.slice(0, 200);
+  const emailText = [
+    `New DramaWin Support / Claim Help Message`,
+    `Ticket ID: ${msgId}`,
+    `Player: ${cleanUsername} (UID: ${actorUid})`,
+    `Contact: ${cleanContact}`,
+    `Category: ${params.category}`,
+    `Subject: ${cleanSubject}`,
+    ``,
+    cleanMessage,
+  ].join('\n');
+
+  const emailHtml = `<h2>New DramaWin Support / Claim Prize Help Ticket</h2>
+<p><strong>Ticket ID:</strong> <code>${escapeHtml(msgId)}</code></p>
+<p><strong>Player:</strong> ${escapeHtml(cleanUsername)} (${escapeHtml(actorUid)})</p>
+<p><strong>Contact:</strong> ${escapeHtml(cleanContact)}</p>
+<p><strong>Category:</strong> ${escapeHtml(params.category)}</p>
+<p><strong>Subject:</strong> ${escapeHtml(cleanSubject)}</p>
+<hr />
+<p style="white-space:pre-wrap;">${escapeHtml(cleanMessage)}</p>`;
+
+  batch.set(
+    doc(db, 'mail', mailId),
+    buildMailPayload({
+      uid: actorUid,
+      eventType: 'support_message',
+      subject: emailSubject,
+      text: emailText,
+      html: emailHtml,
+    })
+  );
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `support_messages/${msgId}`);
+  }
+
+  return msgId;
+}
+
+export function subscribeSupportMessages(
+  onData: (messages: SupportMessageRecord[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const path = 'support_messages';
+  return onSnapshot(
+    query(collection(db, 'support_messages'), limit(200)),
+    (snapshot) => {
+      const list = snapshot.docs
+        .map((d) => ({
+          id: d.id,
+          source: 'cloud' as const,
+          ...(d.data() as Omit<SupportMessageRecord, 'id' | 'source'>),
+        }))
+        .sort((a, b) => {
+          const tA = a.createdAt?.toMillis?.() || a.createdAtMs || 0;
+          const tB = b.createdAt?.toMillis?.() || b.createdAtMs || 0;
+          return tB - tA;
+        });
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        if (onError && wrapped instanceof Error) onError(wrapped);
+      }
+    }
+  );
+}
+
+export function subscribePrizeWins(
+  onData: (wins: PrizeWinRecord[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const path = 'prize_wins';
+  return onSnapshot(
+    query(collection(db, 'prize_wins'), limit(200)),
+    (snapshot) => {
+      const list = snapshot.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<PrizeWinRecord, 'id'>),
+        }))
+        .sort((a, b) => {
+          const tA = a.createdAt?.toMillis?.() || a.createdAtMs || 0;
+          const tB = b.createdAt?.toMillis?.() || b.createdAtMs || 0;
+          return tB - tA;
+        });
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        if (onError && wrapped instanceof Error) onError(wrapped);
+      }
+    }
+  );
+}
+
+export async function updateSupportMessageStatus(
+  messageId: string,
+  status: SupportStatus,
+  adminNote?: string
+): Promise<void> {
+  const path = `support_messages/${messageId}`;
+  const payload: Record<string, unknown> = {
+    status,
+    updatedAt: serverTimestamp(),
+  };
+  if (adminNote !== undefined) {
+    payload.adminNote = adminNote.trim().slice(0, 500);
+  }
+  if (status === 'resolved' && auth.currentUser?.email) {
+    payload.resolvedBy = auth.currentUser.email.slice(0, 120);
+  }
+  try {
+    await updateDoc(doc(db, 'support_messages', messageId), payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }

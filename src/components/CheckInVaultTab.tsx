@@ -20,6 +20,7 @@ interface CheckInVaultTabProps {
   pendingGiftBox?: {
     boxNumber: number;
     secondsLeft: number;
+    progress?: number;
   } | null;
   voucherModal: {
     winner: MysteryWinnerRecord;

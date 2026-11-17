@@ -24,16 +24,16 @@ import {
   sanitizeMediaUrl,
   toSeriesId,
 } from '../constants';
-import { DramaEpisode, PlayerPrivate } from '../types';
+import { DramaEpisode, DramaSeries, PlayerPrivate } from '../types';
 import { resolveEpisodeCover } from '../utils/localState';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
-import { BottomAdBanner } from './BottomAdBanner';
 import { EpisodeWatchScreen } from './EpisodeWatchScreen';
 import { InstallAppWidget } from './InstallAppWidget';
 
 interface SeriesFoldersSectionProps {
   sections: string[];
   episodes: DramaEpisode[];
+  cloudSeries?: DramaSeries[];
   privateState: PlayerPrivate;
   sponsorAdUrl?: string;
   playerWeeklyCoins: number;
@@ -213,6 +213,7 @@ const VerticalPosterCard: React.FC<{
 export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   sections,
   episodes,
+  cloudSeries = [],
   privateState,
   sponsorAdUrl,
   playerWeeklyCoins,
@@ -295,6 +296,13 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
       map.set(sId, entry);
     });
 
+    const cloudSeriesById = new Map<string, DramaSeries>();
+    cloudSeries.forEach((s) => {
+      if (s?.seriesId) {
+        cloudSeriesById.set(s.seriesId, s);
+      }
+    });
+
     return Array.from(map.entries()).map(([seriesId, { displayName, episodes: groupEps }], idx) => {
       const filteredEps = groupEps
         .filter((ep) => {
@@ -305,11 +313,18 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
         })
         .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 
+      const cloudMeta = cloudSeriesById.get(seriesId);
       const lead = filteredEps[0];
-      const explicitCategory = filteredEps.map((ep) => ep.category?.trim()).find(Boolean);
+      const explicitCategory =
+        filteredEps.map((ep) => ep.category?.trim()).find(Boolean) ||
+        cloudMeta?.category?.trim();
       const category = inferEpisodeCategory(displayName, lead?.title, explicitCategory);
+      const cloudCover =
+        cloudMeta?.coverImage && cloudMeta.coverImage !== 'none' && !containsJjkGojoRef(cloudMeta.coverImage)
+          ? sanitizeMediaUrl(cloudMeta.coverImage)
+          : '';
       const leadThumb =
-        filteredEps.map((ep) => resolveIsolatedEpisodeCover(ep)).find(Boolean) || '';
+        filteredEps.map((ep) => resolveIsolatedEpisodeCover(ep)).find(Boolean) || cloudCover || '';
       const firstVideoUrl = filteredEps
         .map((ep) => (ep.videoUrl || ep.youtubeUrl || '').trim())
         .find(Boolean);
@@ -323,15 +338,20 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
         coverImage: leadThumb,
         fallbackYtThumb,
         synopsis:
-          lead?.synopsis || `${displayName} short-drama collection.`,
+          lead?.synopsis || cloudMeta?.synopsis || `${displayName} short-drama collection.`,
         episodes: filteredEps,
-        isNew: idx < 4,
+        isNew: idx < 4 || filteredEps.length === 0,
       };
-    }).filter((group) => group.episodes.length > 0);
-  }, [sections, episodes]);
+    });
+  }, [sections, episodes, cloudSeries]);
 
-  // Hero Carousel slides (up to 5 featured series)
-  const heroSlides = useMemo(() => seriesGroups.slice(0, 5), [seriesGroups]);
+  // Hero Carousel slides (up to 5 featured series; prefer series with episodes/artwork first)
+  const heroSlides = useMemo(() => {
+    const withMedia = seriesGroups.filter(
+      (g) => g.episodes.length > 0 || Boolean(g.coverImage || g.fallbackYtThumb)
+    );
+    return (withMedia.length > 0 ? withMedia : seriesGroups).slice(0, 5);
+  }, [seriesGroups]);
 
   useEffect(() => {
     if (heroIndex >= heroSlides.length && heroSlides.length > 0) {
@@ -451,7 +471,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
     (b) => b.category.toLowerCase() === 'horror'
   );
 
-  // Split category buckets so <BottomAdBanner /> sits neatly between Top Shorts / Drama and Horror
+  // Split category buckets into Drama/pre-Horror rows and Horror+ rows
   const preAdBuckets =
     horrorBucketIndex >= 0
       ? categoryBuckets.slice(0, horrorBucketIndex)
@@ -717,11 +737,6 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                 </div>
               </div>
             ))}
-
-            {/* Clean Inline 320x50 Banner Between Top Shorts/Drama and Horror */}
-            <div className="w-[320px] min-h-[50px] h-[50px] mx-auto overflow-hidden flex items-center justify-center">
-              <BottomAdBanner />
-            </div>
 
             {/* Horror & Remaining Genre Rows */}
             {postAdBuckets.map((bucket) => (

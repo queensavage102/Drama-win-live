@@ -7,6 +7,8 @@ import {
   DEFAULT_SPONSOR_URL,
   LEGACY_BROKEN_SERIES_NAMES,
   MYSTERY_ENTRY_COST,
+  R3_BOOST_ZAR,
+  R3_MYSTERY_CYCLE_ADS,
   SAST_OFFSET_MS,
   SEEDED_TOURNAMENT_PLAYERS,
   deduplicateEpisodeList,
@@ -30,6 +32,9 @@ import {
   LeaderboardPlayer,
   MysteryWinnerRecord,
   PlayerPrivate,
+  PrizeWinRecord,
+  SupportMessageRecord,
+  SupportStatus,
   TransactionCategory,
   WeekDayKey,
 } from '../types';
@@ -43,6 +48,8 @@ const LOCAL_EPISODES_KEY = 'dramawin_episodes';
 const LOCAL_SECTIONS_KEY = 'dramawin_sections_v1';
 const LOCAL_CONFIG_KEY = 'dramawin_app_config_v1';
 const LOCAL_WINNERS_KEY = 'dramawin_mystery_winners_v1';
+const LOCAL_PRIZE_WINS_KEY = 'dramawin_prize_wins_v1';
+const LOCAL_SUPPORT_MESSAGES_KEY = 'dramawin_support_messages_v1';
 const LOCAL_DELETED_IDS_KEY = 'dramawin_deleted_ids_v1';
 
 export const DEFAULT_LOCAL_APP_CONFIG: AppConfig = {
@@ -94,17 +101,20 @@ export function getOrCreateGuestSession(): {
   const savedPrivate = safeReadJson<PlayerPrivate | null>(GUEST_PRIVATE_KEY, null);
 
   if (savedPlayer && savedPrivate && savedPlayer.uid === savedPrivate.uid) {
-    // Ensure weekly reset check matches current week if week rolled
+    // Ensure weekly reset check matches current week and never lock after 11-ad cycle
+    const rawBoxes =
+      savedPrivate.openedMysteryBoxesDate === getTodayDateKey()
+        ? savedPrivate.openedMysteryBoxesToday || []
+        : [];
+    const normalizedBoxes = rawBoxes.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawBoxes;
     const normalizedPrivate: PlayerPrivate = {
       ...savedPrivate,
       claimedDays:
         savedPrivate.weekKey === currentWeek ? savedPrivate.claimedDays || [] : [],
       weekKey: currentWeek,
-      openedMysteryBoxesToday:
-        savedPrivate.openedMysteryBoxesDate === getTodayDateKey()
-          ? savedPrivate.openedMysteryBoxesToday || []
-          : [],
+      openedMysteryBoxesToday: normalizedBoxes,
       openedMysteryBoxesDate: getTodayDateKey(),
+      lastMysteryPickDate: '',
       streakActivityDates: savedPrivate.streakActivityDates || [],
     };
     safeWriteJson(GUEST_PRIVATE_KEY, normalizedPrivate);
@@ -722,13 +732,14 @@ export function claimLocalMysteryBox(params: {
 } {
   const { player, privateProfile, boxNumber, paidWithCoins, appConfig } = params;
   const todayKey = getTodayDateKey();
-  const openedToday =
+  const rawOpened =
     privateProfile.openedMysteryBoxesDate === todayKey
       ? privateProfile.openedMysteryBoxesToday || []
       : [];
+  const openedToday = rawOpened.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawOpened;
 
   if (openedToday.includes(boxNumber)) {
-    throw new Error(`You already opened Box #${boxNumber} today. Try another box!`);
+    throw new Error(`You already opened Box #${boxNumber} in this cycle. Try another box!`);
   }
   if (paidWithCoins && player.coins < MYSTERY_ENTRY_COST) {
     throw new Error(`You need at least ${MYSTERY_ENTRY_COST} Coins to unlock.`);
@@ -738,12 +749,12 @@ export function claimLocalMysteryBox(params: {
   const isNamedWinner =
     targetUsername.length > 0 &&
     player.username.trim().toLowerCase() === targetUsername;
-  const isR5Winner = Boolean(appConfig.nextPickWinsR5) || isNamedWinner;
+  const isR3Winner = Boolean(appConfig.nextPickWinsR5) || isNamedWinner;
 
-  const is11thBoxJackpot = openedToday.length + 1 === 11;
-  const isOopsPick = !isR5Winner && !is11thBoxJackpot && openedToday.length > 0 && Math.random() < 0.3;
-  const chosen: BoxOutcome = isR5Winner
-    ? { boxNumber, kind: 'airtime', coins: 0 }
+  const is11thBoxJackpot = openedToday.length + 1 >= R3_MYSTERY_CYCLE_ADS;
+  const isOopsPick = !isR3Winner && !is11thBoxJackpot && openedToday.length > 0 && Math.random() < 0.3;
+  const chosen: BoxOutcome = isR3Winner
+    ? { boxNumber, kind: 'airtime', coins: 1000 }
     : is11thBoxJackpot
       ? {
           boxNumber,
@@ -764,16 +775,17 @@ export function claimLocalMysteryBox(params: {
 
   const entryCost = paidWithCoins ? MYSTERY_ENTRY_COST : 0;
   const walletDelta = chosen.coins - entryCost;
-  const nextOpened = [...openedToday, boxNumber];
+  // Automatically reset the Mystery Box grid back to Box 1 right after the 11th video ad is claimed
+  const nextOpened = is11thBoxJackpot ? [] : [...openedToday, boxNumber];
 
   let winnerRecord: MysteryWinnerRecord | undefined;
   let newPoolPrizeZar: number | undefined;
   let nextConfig = appConfig;
 
   if (chosen.kind === 'airtime') {
-    const voucherCode = `DW-R5-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const voucherCode = `DW-R3-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     chosen.voucherCode = voucherCode;
-    newPoolPrizeZar = (appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR) + 5;
+    newPoolPrizeZar = (appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR) + R3_BOOST_ZAR;
     nextConfig = saveLocalAppConfig({
       ...appConfig,
       poolPrizeZar: newPoolPrizeZar,
@@ -786,7 +798,7 @@ export function claimLocalMysteryBox(params: {
       username: player.username,
       contact: privateProfile.contact,
       voucherCode,
-      amountZar: 5,
+      amountZar: R3_BOOST_ZAR,
       boxNumber,
       createdAtMs: Date.now(),
     };
@@ -811,9 +823,9 @@ export function claimLocalMysteryBox(params: {
             category: 'mystery-box',
             title:
               chosen.kind === 'airtime'
-                ? `Mystery Box #${boxNumber} — R5 Airtime Win`
+                ? `Mystery Box #${boxNumber} — R3 Progress Bar Boost`
                 : chosen.kind === 'jackpot'
-                  ? `Mystery Box #${boxNumber} — 11th Box Jackpot`
+                  ? `Mystery Box #${boxNumber} — 11th Ad R3 Boost (+1,000 Coins)`
                   : `Mystery Box #${boxNumber} Bonus`,
           },
   });
@@ -838,6 +850,48 @@ export function resetLocalMysteryBoxes(privateProfile: PlayerPrivate): PlayerPri
   };
   safeWriteJson(GUEST_PRIVATE_KEY, updated);
   return updated;
+}
+
+export function loadLocalPrizeWins(): PrizeWinRecord[] {
+  return safeReadJson<PrizeWinRecord[]>(LOCAL_PRIZE_WINS_KEY, []);
+}
+
+export function addLocalPrizeWin(record: PrizeWinRecord): PrizeWinRecord[] {
+  const existing = loadLocalPrizeWins();
+  const next = [record, ...existing.filter((item) => item.id !== record.id)].slice(0, 150);
+  safeWriteJson(LOCAL_PRIZE_WINS_KEY, next);
+  return next;
+}
+
+export function loadLocalSupportMessages(): SupportMessageRecord[] {
+  return safeReadJson<SupportMessageRecord[]>(LOCAL_SUPPORT_MESSAGES_KEY, []);
+}
+
+export function addLocalSupportMessage(record: SupportMessageRecord): SupportMessageRecord[] {
+  const existing = loadLocalSupportMessages();
+  const next = [record, ...existing.filter((item) => item.id !== record.id)].slice(0, 200);
+  safeWriteJson(LOCAL_SUPPORT_MESSAGES_KEY, next);
+  return next;
+}
+
+export function updateLocalSupportMessageStatus(
+  messageId: string,
+  status: SupportStatus,
+  adminNote?: string
+): SupportMessageRecord[] {
+  const existing = loadLocalSupportMessages();
+  const next = existing.map((item) =>
+    item.id === messageId
+      ? {
+          ...item,
+          status,
+          adminNote: adminNote !== undefined ? adminNote : item.adminNote,
+          updatedAtMs: Date.now(),
+        }
+      : item
+  );
+  safeWriteJson(LOCAL_SUPPORT_MESSAGES_KEY, next);
+  return next;
 }
 
 export function getLast7DaysDateKeysSAST(now = new Date()): {

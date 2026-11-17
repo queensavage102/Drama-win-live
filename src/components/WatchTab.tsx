@@ -1,10 +1,11 @@
 import React from 'react';
-import { DramaEpisode, PlayerPrivate } from '../types';
+import { DramaEpisode, DramaSeries, PlayerPrivate } from '../types';
 import { SeriesFoldersSection } from './SeriesFoldersSection';
 
 interface WatchTabProps {
   sections: string[];
   episodes: DramaEpisode[];
+  cloudSeries?: DramaSeries[];
   privateState: PlayerPrivate;
   sponsorAdUrl?: string;
   playerWeeklyCoins: number;
@@ -22,6 +23,7 @@ interface WatchTabProps {
 export const WatchTab: React.FC<WatchTabProps> = ({
   sections,
   episodes,
+  cloudSeries,
   privateState,
   sponsorAdUrl,
   playerWeeklyCoins,
@@ -39,6 +41,7 @@ export const WatchTab: React.FC<WatchTabProps> = ({
     <SeriesFoldersSection
       sections={sections}
       episodes={episodes}
+      cloudSeries={cloudSeries}
       privateState={privateState}
       sponsorAdUrl={sponsorAdUrl}
       playerWeeklyCoins={playerWeeklyCoins}
