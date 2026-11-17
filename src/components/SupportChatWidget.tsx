@@ -75,7 +75,7 @@ function buildConversationalReply(
 ): { text: string; action?: 'open_ticket' } {
   const q = question.toLowerCase().trim();
   const firstName =
-    ctx.username && ctx.username !== 'Player' ? ctx.username.split(' ') : 'friend';
+    ctx.username && ctx.username !== 'Player' ? ctx.username.split(' ') .at(0): 'friend';
   const safeThreshold = Math.max(1, ctx.qualificationThreshold || 500000);
   const currentWeekly = ctx.weeklyCoins || 0;
   const remainingWeekly = Math.max(0, safeThreshold - currentWeekly);
@@ -201,7 +201,8 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   const [activeMode, setActiveMode] = useState<'ai' | 'ticket'>('ai');
 
   const getInitialMessage = (): ChatMessageItem => {
-    const firstName = username && username !== 'Player' ? username.split(' ') : 'there';
+  const firstName = username && username !== 'Player' ? username.split(' ').at(0) : 'there';
+
     return {
       id: 'welcome-bot',
       role: 'assistant',
@@ -402,7 +403,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   return (
     <>
       {open ? (
-        <div className="fixed inset-x-2 bottom-20 top-14 sm:inset-auto sm:bottom-20 sm:right-6 sm:w-[390px] sm:h-[540px] z- flex flex-col">
+        <div className="fixed inset-x-2 bottom-20 top-14 sm:inset-auto sm:bottom-20 sm:right-6 sm:w-[390px] sm:h-[540px] z-50 flex flex-col">
           <section
             role="dialog"
             aria-label="DramaWin VIP Support"
