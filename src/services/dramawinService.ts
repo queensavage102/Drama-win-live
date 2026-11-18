@@ -2129,6 +2129,7 @@ ${params.voucherCode ? `<p><strong>Voucher:</strong> <code>${escapeHtml(params.v
 }
 
 export async function submitSupportMessageAndNotifyEmail(params: {
+  id?: string;
   uid: string;
   username: string;
   contact: string;
@@ -2141,7 +2142,8 @@ export async function submitSupportMessageAndNotifyEmail(params: {
     throw new Error('Google sign-in required to sync support ticket to Firebase.');
   }
 
-  const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const msgId =
+    params.id?.trim() || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const mailId = `mail-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
   const cleanUsername = (params.username.trim() || 'Player').slice(0, 40);

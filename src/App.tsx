@@ -10,7 +10,7 @@ import { ForYouTab } from './components/ForYouTab';
 import { MeTab } from './components/MeTab';
 import { MysteryRevealState, MysteryVaultCard } from './components/MysteryVaultCard';
 import { RealisticGoldCoin } from './components/RealisticGoldCoin';
-import { SupportChatWidget, SupportTicketSubmissionInput } from './components/SupportChatWidget';
+import { SupportChatWidget } from './components/SupportChatWidget';
 import { TopHeader } from './components/TopHeader';
 import { VipSplashScreen } from './components/VipSplashScreen';
 import { WatchTab } from './components/WatchTab';
@@ -45,20 +45,17 @@ import {
   purgeLegacyAndStrayEpisodesFromFirestore,
   recordPrizeWinAndNotifyEmail,
   resetPlayerCoinsToZero,
-  submitSupportMessageAndNotifyEmail,
   subscribeAppConfig,
   subscribeLeaderboard,
   subscribeMysteryWinners,
   subscribePlayerPrivate,
   subscribePrizeWins,
-  subscribeSupportMessages,
   subscribeTransactions,
   unlockAdminAccess,
   updateEmbeddedAdHtml,
   updateLiveTickerConfig,
   updateMysteryAndRolloverConfig,
   updateSponsorAdUrl,
-  updateSupportMessageStatus,
 } from './services/dramawinService';
 import {
   AppConfig,
@@ -76,7 +73,6 @@ import {
 } from './types';
 import {
   addLocalPrizeWin,
-  addLocalSupportMessage,
   applyLocalCoinMutation,
   claimLocalMysteryBox,
   getOrCreateGuestSession,
@@ -169,7 +165,6 @@ function DramaWinApp() {
   const [localTransactions, setLocalTransactions] = useState<CoinTransaction[]>(() =>
     loadLocalTransactions(initialSession.player.uid)
   );
-  const [cloudSupportMessages, setCloudSupportMessages] = useState<SupportMessageRecord[]>([]);
   const [localSupportMessages, setLocalSupportMessages] = useState<SupportMessageRecord[]>(() =>
     loadLocalSupportMessages()
   );
@@ -339,17 +334,12 @@ function DramaWinApp() {
   );
 
   const supportMessages: SupportMessageRecord[] = useMemo(() => {
-    const merged = new Map<string, SupportMessageRecord>();
-    cloudSupportMessages.forEach((m) => merged.set(m.id, m));
-    localSupportMessages.forEach((m) => {
-      if (!merged.has(m.id)) merged.set(m.id, m);
-    });
-    return Array.from(merged.values()).sort((a, b) => {
-      const tA = a.createdAt?.toMillis?.() || a.createdAtMs || 0;
-      const tB = b.createdAt?.toMillis?.() || b.createdAtMs || 0;
+    return [...localSupportMessages].sort((a, b) => {
+      const tA = a.createdAtMs || 0;
+      const tB = b.createdAtMs || 0;
       return tB - tA;
     });
-  }, [cloudSupportMessages, localSupportMessages]);
+  }, [localSupportMessages]);
 
   const prizeWins: PrizeWinRecord[] = useMemo(() => {
     const merged = new Map<string, PrizeWinRecord>();
@@ -397,16 +387,27 @@ function DramaWinApp() {
     };
   }, []);
 
-  // Listen to browser history popstate for /admin routing
+  // Listen to browser history popstate and cross-tab localStorage updates for /admin tickets
   useEffect(() => {
     const handlePop = () => {
       setIsAdminRoute(isAdminPath());
+      setLocalSupportMessages(loadLocalSupportMessages());
+    };
+    const handleStorage = (e: StorageEvent) => {
+      if (!e.key || e.key === 'dramawin_support_messages_v1') {
+        setLocalSupportMessages(loadLocalSupportMessages());
+      }
     };
     window.addEventListener('popstate', handlePop);
-    return () => window.removeEventListener('popstate', handlePop);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('popstate', handlePop);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, []);
 
   const navigateToAdmin = () => {
+    setLocalSupportMessages(loadLocalSupportMessages());
     if (typeof window !== 'undefined' && !isAdminPath()) {
       window.history.pushState({}, '', '/admin');
     }
@@ -483,7 +484,6 @@ function DramaWinApp() {
         setCloudLeaderboard([]);
         setCloudWinners([]);
         setCloudTransactions([]);
-        setCloudSupportMessages([]);
         setCloudPrizeWins([]);
         setCloudOpenedBoxes([]);
         return;
@@ -514,9 +514,6 @@ function DramaWinApp() {
     const unsubWinners = adminUnlocked
       ? subscribeMysteryWinners(setCloudWinners, () => {})
       : () => {};
-    const unsubSupport = adminUnlocked
-      ? subscribeSupportMessages(setCloudSupportMessages, () => {})
-      : () => {};
     const unsubPrizeWins = adminUnlocked
       ? subscribePrizeWins(setCloudPrizeWins, () => {})
       : () => {};
@@ -524,7 +521,6 @@ function DramaWinApp() {
     if (!cloudPrivateProfile) {
       return () => {
         unsubWinners();
-        unsubSupport();
         unsubPrizeWins();
       };
     }
@@ -540,7 +536,6 @@ function DramaWinApp() {
       unsubPrivate();
       unsubTransactions();
       unsubWinners();
-      unsubSupport();
       unsubPrizeWins();
     };
   }, [firebaseUser, cloudPrivateProfile?.uid, adminUnlocked]);
@@ -1488,58 +1483,15 @@ function DramaWinApp() {
     setFirebaseUser(cred.user);
   }, []);
 
-  const handleSubmitSupportTicket = useCallback(
-    async (
-      input: SupportTicketSubmissionInput
-    ): Promise<{ id: string; syncedToCloud: boolean }> => {
-      const activeUser = firebaseUser || auth.currentUser;
-      const nowMs = Date.now();
-      let ticketId = `msg-loc-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
-      let syncedToCloud = false;
-
-      if (activeUser) {
-        ticketId = await submitSupportMessageAndNotifyEmail({
-          uid: activeUser.uid,
-          username: input.username,
-          contact: input.contact,
-          category: input.category,
-          subject: input.subject,
-          message: input.message,
-        });
-        syncedToCloud = true;
-      }
-
-      const localRecord: SupportMessageRecord = {
-        id: ticketId,
-        uid: activeUser?.uid || currentPlayer.uid,
-        username: input.username,
-        contact: input.contact,
-        category: input.category,
-        subject: input.subject,
-        message: input.message,
-        status: 'open',
-        source: syncedToCloud ? 'cloud' : 'local',
-        createdAtMs: nowMs,
-        updatedAtMs: nowMs,
-      };
-      setLocalSupportMessages(addLocalSupportMessage(localRecord));
-      return { id: ticketId, syncedToCloud };
-    },
-    [firebaseUser, currentPlayer.uid]
-  );
-
   const handleResolveSupportMessage = useCallback(
-    async (
+    (
       msg: SupportMessageRecord,
       status: SupportStatus,
       adminNote?: string
-    ): Promise<void> => {
+    ): void => {
       setLocalSupportMessages(updateLocalSupportMessageStatus(msg.id, status, adminNote));
-      if (msg.source === 'cloud' && (firebaseUser || auth.currentUser)) {
-        await updateSupportMessageStatus(msg.id, status, adminNote);
-      }
     },
-    [firebaseUser]
+    []
   );
 
   if (isAdminRoute) {
@@ -1785,6 +1737,7 @@ function DramaWinApp() {
 
       {/* Floating AI Support Assistant & Admin Help Widget */}
       <SupportChatWidget
+        uid={currentPlayer.uid}
         username={currentPlayer.username}
         contact={privateProfile.contact}
         coins={currentPlayer.coins}
@@ -1794,7 +1747,7 @@ function DramaWinApp() {
         isFirebaseSignedIn={Boolean(firebaseUser)}
         firebaseEmail={firebaseUser?.email || null}
         onSignInGoogle={handleSignInWithGoogleForSupport}
-        onSubmitSupportTicket={handleSubmitSupportTicket}
+        onTicketsUpdated={setLocalSupportMessages}
       />
 
       {/* Fixed 4-Tab Bottom Navigation Bar */}

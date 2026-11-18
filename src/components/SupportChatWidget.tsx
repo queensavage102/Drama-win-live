@@ -3,7 +3,6 @@ import {
   Bot,
   CheckCircle2,
   Headphones,
-  Loader2,
   Mail,
   MessageSquareHeart,
   Send,
@@ -12,9 +11,9 @@ import {
   X,
 } from 'lucide-react';
 import { R3_BOOST_ZAR, R3_MYSTERY_CYCLE_ADS } from '../constants';
-import { SupportCategory } from '../types';
+import { SupportCategory, SupportMessageRecord } from '../types';
+import { addLocalSupportMessage } from '../utils/localState';
 
-const WEB3FORMS_ACCESS_KEY = '1cf6a6bd-bbe1-44ae-94ca-5ee93136033e';
 const CHAT_STORAGE_KEY = 'dramawin_support_chat_v1';
 
 interface ChatMessageItem {
@@ -33,6 +32,7 @@ export interface SupportTicketSubmissionInput {
 }
 
 interface SupportChatWidgetProps {
+  uid?: string;
   username: string;
   contact: string;
   coins: number;
@@ -42,9 +42,7 @@ interface SupportChatWidgetProps {
   isFirebaseSignedIn: boolean;
   firebaseEmail?: string | null;
   onSignInGoogle: () => Promise<void>;
-  onSubmitSupportTicket: (
-    input: SupportTicketSubmissionInput
-  ) => Promise<{ id: string; syncedToCloud: boolean }>;
+  onTicketsUpdated?: (tickets: SupportMessageRecord[]) => void;
 }
 
 const QUICK_PROMPTS = [
@@ -188,6 +186,7 @@ function buildConversationalReply(
 }
 
 export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
+  uid = 'player',
   username,
   contact,
   coins,
@@ -195,7 +194,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   qualificationThreshold,
   poolPrizeZar,
   firebaseEmail = null,
-  onSubmitSupportTicket,
+  onTicketsUpdated,
 }) => {
   const [open, setOpen] = useState(false);
   const [activeMode, setActiveMode] = useState<'ai' | 'ticket'>('ai');
@@ -233,7 +232,6 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   const [ticketCategory, setTicketCategory] = useState<SupportCategory>('claim_prize');
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMessage, setTicketMessage] = useState('');
-  const [submittingTicket, setSubmittingTicket] = useState(false);
   const [ticketError, setTicketError] = useState<string | null>(null);
   const [submittedReceipt, setSubmittedReceipt] = useState<{
     id: string;
@@ -322,9 +320,10 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     sendAiPrompt(chatInput);
   };
 
-  const handleTicketSubmit = async (e: React.FormEvent) => {
+  const handleTicketSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setTicketError(null);
+    setSubmittedReceipt(null);
 
     if (ticketName.trim().length < 2) {
       setTicketError('Please enter your player name.');
@@ -343,62 +342,30 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
       return;
     }
 
-    setSubmittingTicket(true);
-    try {
-      const formData = new FormData();
-      formData.append('access_key', WEB3FORMS_ACCESS_KEY);
-      formData.append(
-        'subject',
-        `[DramaWin ${ticketCategory.toUpperCase()}] ${ticketSubject.trim()}`
-      );
-      formData.append('from_name', `DramaWin Player: ${ticketName.trim()}`);
-      if (ticketContact.includes('@')) {
-        formData.append('replyto', ticketContact.trim());
-      }
-      formData.append('Player_Name', ticketName.trim());
-      formData.append('Reply_Contact', ticketContact.trim());
-      formData.append('Category', ticketCategory);
-      formData.append('Wallet_Coins', String(coins));
-      formData.append('Weekly_Coins', String(weeklyCoins));
-      formData.append('Message', ticketMessage.trim());
+    const nowMs = Date.now();
+    const ticketId = `msg-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
+    const nextTickets = addLocalSupportMessage({
+      id: ticketId,
+      uid,
+      username: ticketName.trim(),
+      contact: ticketContact.trim(),
+      category: ticketCategory,
+      subject: ticketSubject.trim(),
+      message: ticketMessage.trim(),
+      status: 'open',
+      source: 'local',
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
 
-      const web3Res = await fetch('https://web3forms.com', {
-        method: 'POST',
-        body: formData,
-      });
-      const web3Data = await web3Res.json();
-
-      let receipt = {
-        id: `DW-${Date.now().toString().slice(-5)}`,
-        syncedToCloud: Boolean(web3Data?.success),
-      };
-
-      try {
-        const appReceipt = await onSubmitSupportTicket({
-          username: ticketName.trim(),
-          contact: ticketContact.trim(),
-          category: ticketCategory,
-          subject: ticketSubject.trim(),
-          message: ticketMessage.trim(),
-        });
-        receipt = {
-          id: appReceipt.id || receipt.id,
-          syncedToCloud: Boolean(web3Data?.success) || appReceipt.syncedToCloud,
-        };
-      } catch {
-        // Fallback if local/cloud ticket handler throws while Web3Forms succeeded
-      }
-
-      setSubmittedReceipt(receipt);
-      setTicketSubject('');
-      setTicketMessage('');
-    } catch (err) {
-      setTicketError(
-        err instanceof Error ? err.message : 'Unable to send message. Please try again.'
-      );
-    } finally {
-      setSubmittingTicket(false);
-    }
+    onTicketsUpdated?.(nextTickets);
+    setSubmittedReceipt({
+      id: ticketId,
+      syncedToCloud: false,
+    });
+    setTicketSubject('');
+    setTicketMessage('');
+    return;
   };
   return (
     <>
@@ -568,116 +535,99 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
             ) : (
               /* Clean Admin Ticket Form */
               <div className="flex-1 overflow-y-auto p-3.5">
-                {submittedReceipt ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center px-3 space-y-2.5">
-                    <div className="w-11 h-11 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-                      <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-                    </div>
-                    <h4 className="text-sm font-bold text-white">Sent to DramaWin Admin</h4>
-                    <p className="text-xs text-zinc-300">
-                      Ticket <span className="font-mono text-amber-300">{submittedReceipt.id}</span>
-                    </p>
-                    <p className="text-[11px] text-zinc-400 max-w-[260px]">
-                      We received your details and will reply to your email or WhatsApp shortly.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setSubmittedReceipt(null)}
-                      className="mt-2 px-4 py-2 rounded-xl bg-amber-400 text-black text-xs font-semibold"
+                <form onSubmit={handleTicketSubmit} className="space-y-2.5">
+                  {submittedReceipt && (
+                    <div
+                      role="status"
+                      className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-xs flex items-start gap-2"
                     >
-                      Send Another Message
-                    </button>
-                  </div>
-                ) : (
-                  <form onSubmit={handleTicketSubmit} className="space-y-2.5">
-                    {ticketError && (
-                      <div className="p-2 rounded-xl bg-red-500/15 border border-red-500/40 text-red-200 text-[11px]">
-                        {ticketError}
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[11px] text-zinc-400 mb-1">
-                          Player Name
-                        </label>
-                        <input
-                          type="text"
-                          value={ticketName}
-                          onChange={(e) => setTicketName(e.target.value)}
-                          className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] text-zinc-400 mb-1">
-                          Email / WhatsApp
-                        </label>
-                        <input
-                          type="text"
-                          value={ticketContact}
-                          onChange={(e) => setTicketContact(e.target.value)}
-                          placeholder="you@email.com"
-                          className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
-                        />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-emerald-300">Message sent to Admin Board!</p>
+                        <p className="text-[11px] text-emerald-200/80 font-mono">
+                          Ticket {submittedReceipt.id}
+                        </p>
                       </div>
                     </div>
+                  )}
 
-                    <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">Category</label>
-                      <select
-                        value={ticketCategory}
-                        onChange={(e) => setTicketCategory(e.target.value as SupportCategory)}
-                        className="w-full bg-[#1e1a15] border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
-                      >
-                        {SUPPORT_CATEGORY_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
+                  {ticketError && (
+                    <div className="p-2 rounded-xl bg-red-500/15 border border-red-500/40 text-red-200 text-[11px]">
+                      {ticketError}
                     </div>
+                  )}
 
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">Subject</label>
+                      <label className="block text-[11px] text-zinc-400 mb-1">
+                        Player Name
+                      </label>
                       <input
                         type="text"
-                        value={ticketSubject}
-                        onChange={(e) => setTicketSubject(e.target.value)}
-                        placeholder="e.g. Sunday Pool payout help"
+                        value={ticketName}
+                        onChange={(e) => setTicketName(e.target.value)}
                         className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
                       />
                     </div>
-
                     <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">Message</label>
-                      <textarea
-                        rows={3}
-                        value={ticketMessage}
-                        onChange={(e) => setTicketMessage(e.target.value)}
-                        placeholder="Tell us how we can help..."
-                        className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60 resize-none"
+                      <label className="block text-[11px] text-zinc-400 mb-1">
+                        Email / WhatsApp
+                      </label>
+                      <input
+                        type="text"
+                        value={ticketContact}
+                        onChange={(e) => setTicketContact(e.target.value)}
+                        placeholder="you@email.com"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
                       />
                     </div>
+                  </div>
 
-                    <button
-                      type="submit"
-                      disabled={submittingTicket}
-                      className="w-full py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-black font-bold text-xs flex items-center justify-center gap-1.5 transition"
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1">Category</label>
+                    <select
+                      value={ticketCategory}
+                      onChange={(e) => setTicketCategory(e.target.value as SupportCategory)}
+                      className="w-full bg-[#1e1a15] border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
                     >
-                      {submittingTicket ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Sending...
-                        </>
-                      ) : (
-                        <>
-                          <MessageSquareHeart className="w-4 h-4" />
-                          Send to Admin
-                        </>
-                      )}
-                    </button>
-                  </form>
-                )}
+                      {SUPPORT_CATEGORY_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1">Subject</label>
+                    <input
+                      type="text"
+                      value={ticketSubject}
+                      onChange={(e) => setTicketSubject(e.target.value)}
+                      placeholder="e.g. Sunday Pool payout help"
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1">Message</label>
+                    <textarea
+                      rows={3}
+                      value={ticketMessage}
+                      onChange={(e) => setTicketMessage(e.target.value)}
+                      placeholder="Tell us how we can help..."
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400/60 resize-none"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs flex items-center justify-center gap-1.5 transition"
+                  >
+                    <MessageSquareHeart className="w-4 h-4" />
+                    Send to Admin
+                  </button>
+                </form>
               </div>
             )}
           </section>

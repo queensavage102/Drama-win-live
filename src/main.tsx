@@ -11,16 +11,29 @@ if (typeof window !== 'undefined') {
   });
 
   if ('serviceWorker' in navigator) {
-    const registerSW = () => {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {
-        // Ignore registration errors in unsupported/restricted contexts
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((registrations) => {
+        registrations.forEach((registration) => {
+          void registration.unregister();
+        });
+      })
+      .catch(() => {
+        // Ignore cleanup errors
       });
-    };
-    if (document.readyState === 'complete') {
-      registerSW();
-    } else {
-      window.addEventListener('load', registerSW, { once: true });
-    }
+  }
+
+  if ('caches' in window) {
+    caches
+      .keys()
+      .then((keys) => {
+        keys.forEach((key) => {
+          void caches.delete(key);
+        });
+      })
+      .catch(() => {
+        // Ignore cache cleanup errors
+      });
   }
 }
 

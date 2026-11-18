@@ -24,6 +24,8 @@ import {
   MessageSquare,
   CheckCircle2,
   Mail,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   ADMIN_NOTIFICATION_EMAIL,
@@ -125,7 +127,7 @@ interface AdminBoardPageProps {
     msg: SupportMessageRecord,
     status: SupportStatus,
     adminNote?: string
-  ) => Promise<void>;
+  ) => void | Promise<void>;
 }
 
 const ResolvedThumb: React.FC<{ src: string; alt: string; className?: string }> = ({
@@ -378,6 +380,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   >({});
   const [savingPlayerId, setSavingPlayerId] = useState<string | null>(null);
   const [supportFilter, setSupportFilter] = useState<'open' | 'resolved' | 'all'>('open');
+  const [expandedSupportIds, setExpandedSupportIds] = useState<Record<string, boolean>>({});
   const [supportNoteDrafts, setSupportNoteDrafts] = useState<Record<string, string>>({});
   const [resolvingMessageId, setResolvingMessageId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -2724,7 +2727,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     </h2>
                   </div>
                   <p className="text-xs text-[#8D867A]">
-                    Tickets submitted via the floating Support widget — auto-emailed to {ADMIN_NOTIFICATION_EMAIL}.
+                    Click any ticket card below to expand and read the full message, view player Email/WhatsApp, and mark resolved.
                   </p>
                 </div>
 
@@ -2759,6 +2762,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   {visibleSupportMessages.map((msg) => {
                     const isResolved = msg.status === 'resolved';
                     const isBusy = resolvingMessageId === msg.id;
+                    const isExpanded = Boolean(expandedSupportIds[msg.id]);
                     const noteValue =
                       supportNoteDrafts[msg.id] !== undefined
                         ? supportNoteDrafts[msg.id]
@@ -2769,17 +2773,34 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                         ? new Date(msg.createdAtMs).toLocaleString()
                         : 'Just now';
 
+                    const toggleCard = () => {
+                      setExpandedSupportIds((prev) => ({
+                        ...prev,
+                        [msg.id]: !prev[msg.id],
+                      }));
+                    };
+
                     return (
                       <div
                         key={msg.id}
-                        className={`rounded-xl border p-4 space-y-3 ${
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={isExpanded}
+                        onClick={toggleCard}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleCard();
+                          }
+                        }}
+                        className={`rounded-xl border p-4 space-y-3 cursor-pointer transition-colors ${
                           isResolved
-                            ? 'bg-[#0A0F0B] border-emerald-500/25'
-                            : 'bg-[#09090D] border-[#D4AF37]/30'
+                            ? 'bg-[#0A0F0B] border-emerald-500/25 hover:border-emerald-500/45'
+                            : 'bg-[#09090D] border-[#D4AF37]/30 hover:border-[#D4AF37]/60'
                         }`}
                       >
                         <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="space-y-1 min-w-0">
+                          <div className="space-y-1 min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
@@ -2796,75 +2817,120 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                               <span className="text-[11px] font-mono-num text-[#8D867A]">
                                 {msg.source === 'local' ? 'Local Storage' : 'Firebase Cloud'}
                               </span>
+                              <span className="text-[11px] text-[#8D867A]">· {dateLabel}</span>
                             </div>
-                            <h3 className="text-sm font-bold text-[#F6F2E9]">
-                              {msg.subject}
-                            </h3>
+                            <h3 className="text-sm font-bold text-[#F6F2E9]">{msg.subject}</h3>
                             <p className="text-xs text-[#BFB7A6]">
-                              From <strong className="text-[#FCE7A2]">{msg.username}</strong> ·{' '}
-                              <span className="font-mono-num">{msg.contact}</span> · {dateLabel}
+                              Player: <strong className="text-[#FCE7A2]">{msg.username}</strong> ·{' '}
+                              Email/WhatsApp:{' '}
+                              <span className="font-mono-num text-[#F6F2E9]">{msg.contact}</span>
                             </p>
+                            {!isExpanded && (
+                              <p className="text-xs text-[#8D867A] truncate pt-0.5">
+                                {msg.message}
+                              </p>
+                            )}
                           </div>
 
-                          {onResolveSupportMessage && (
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() =>
-                                void handleToggleResolveSupport(
-                                  msg,
-                                  isResolved ? 'open' : 'resolved'
-                                )
-                              }
-                              className={`min-h-[36px] px-3 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50 ${
-                                isResolved
-                                  ? 'border border-white/15 text-[#C4BDB0] hover:bg-white/[0.06]'
-                                  : 'gold-gradient-bg text-[#181307] hover:brightness-105'
-                              }`}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {onResolveSupportMessage && (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleToggleResolveSupport(
+                                    msg,
+                                    isResolved ? 'open' : 'resolved'
+                                  );
+                                }}
+                                className={`min-h-[36px] px-3 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50 ${
+                                  isResolved
+                                    ? 'border border-white/15 text-[#C4BDB0] hover:bg-white/[0.06]'
+                                    : 'gold-gradient-bg text-[#181307] hover:brightness-105'
+                                }`}
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>
+                                  {isBusy
+                                    ? 'Updating...'
+                                    : isResolved
+                                      ? 'Reopen Ticket'
+                                      : 'Mark Resolved'}
+                                </span>
+                              </button>
+                            )}
+                            <span
+                              aria-hidden="true"
+                              className="p-1.5 rounded-lg border border-white/10 text-[#A69F91]"
                             >
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>
-                                {isBusy
-                                  ? 'Updating...'
-                                  : isResolved
-                                    ? 'Reopen Ticket'
-                                    : 'Mark Resolved'}
+                              {isExpanded ? (
+                                <ChevronUp className="w-4 h-4" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4" />
+                              )}
+                            </span>
+                          </div>
+                        </div>
+
+                        {isExpanded && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="space-y-3 pt-2 border-t border-white/[0.08] cursor-default"
+                          >
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-lg bg-[#070709] border border-white/[0.06] p-3 text-xs">
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-[#8D867A] block">
+                                  Player Name
+                                </span>
+                                <span className="font-semibold text-[#FCE7A2]">{msg.username}</span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-[#8D867A] block">
+                                  Email / WhatsApp
+                                </span>
+                                <span className="font-mono-num text-[#F6F2E9] select-all">
+                                  {msg.contact}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="bg-[#070709] border border-white/[0.06] rounded-lg p-3 space-y-1">
+                              <span className="text-[10px] uppercase tracking-wider text-[#8D867A] block">
+                                Full Message
                               </span>
-                            </button>
-                          )}
-                        </div>
+                              <p className="text-xs sm:text-sm text-[#E5DFD2] whitespace-pre-wrap break-words">
+                                {msg.message}
+                              </p>
+                            </div>
 
-                        <p className="text-xs sm:text-sm text-[#E5DFD2] bg-[#070709] border border-white/[0.06] rounded-lg p-3 whitespace-pre-wrap">
-                          {msg.message}
-                        </p>
-
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <input
-                            type="text"
-                            maxLength={500}
-                            value={noteValue}
-                            onChange={(e) =>
-                              setSupportNoteDrafts((prev) => ({
-                                ...prev,
-                                [msg.id]: e.target.value,
-                              }))
-                            }
-                            placeholder="Optional admin resolution note (saved on resolve/update)"
-                            className="flex-1 min-h-[38px] px-3 rounded-lg bg-[#070709] border border-white/[0.1] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                          />
-                          {onResolveSupportMessage && (
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() =>
-                                void handleToggleResolveSupport(msg, msg.status)
-                              }
-                              className="min-h-[38px] px-3 rounded-lg border border-[#D4AF37]/35 text-[#FCE7A2] hover:bg-[#D4AF37]/10 text-xs font-semibold whitespace-nowrap cursor-pointer disabled:opacity-50"
-                            >
-                              Save Note
-                            </button>
-                          )}
-                        </div>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <input
+                                type="text"
+                                maxLength={500}
+                                value={noteValue}
+                                onChange={(e) =>
+                                  setSupportNoteDrafts((prev) => ({
+                                    ...prev,
+                                    [msg.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder="Optional admin resolution note (saved on resolve/update)"
+                                className="flex-1 min-h-[38px] px-3 rounded-lg bg-[#070709] border border-white/[0.1] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                              />
+                              {onResolveSupportMessage && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => void handleToggleResolveSupport(msg, msg.status)}
+                                  className="min-h-[38px] px-3 rounded-lg border border-[#D4AF37]/35 text-[#FCE7A2] hover:bg-[#D4AF37]/10 text-xs font-semibold whitespace-nowrap cursor-pointer disabled:opacity-50"
+                                >
+                                  Save Note
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
