@@ -2152,7 +2152,8 @@ export async function submitSupportMessageAndNotifyEmail(params: {
   
 
   
-  await setDoc(db, 'support_messages', msgId), {
+  await setDoc(doc(db, 'support_messages', msgId), {
+    
     uid: actorUid,
     username: cleanUsername.length >= 2 ? cleanUsername : 'Player',
     contact: cleanContact.length >= 2 ? cleanContact : 'N/A',
