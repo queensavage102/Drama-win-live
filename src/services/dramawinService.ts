@@ -2147,10 +2147,12 @@ export async function submitSupportMessageAndNotifyEmail(params: {
   const cleanUsername = (params.username.trim() || 'Player').slice(0, 40);
   const cleanContact = (params.contact.trim() || 'Not provided').slice(0, 120);
   const cleanSubject = (params.subject.trim() || 'Player Support Request').slice(0, 120);
-  const cleanMessage = params.message.trim().slice(0, 2000);
+  const rawMsg = params.message.trim().slice(0, 2000);
+  const cleanMessage = rawMsg.length >= 2 ? rawMsg : `${rawMsg}.`;
+  
 
-  const batch = writeBatch(db);
-  batch.set(doc(db, 'support_messages', msgId), {
+  
+  await setDoc(db, 'support_messages', msgId), {
     uid: actorUid,
     username: cleanUsername.length >= 2 ? cleanUsername : 'Player',
     contact: cleanContact.length >= 2 ? cleanContact : 'N/A',
@@ -2180,10 +2182,7 @@ export async function submitSupportMessageAndNotifyEmail(params: {
 <p><strong>Contact:</strong> ${escapeHtml(cleanContact)}</p>
 <p><strong>Category:</strong> ${escapeHtml(params.category)}</p>
 <p><strong>Subject:</strong> ${escapeHtml(cleanSubject)}</p>
-<hr />
-<p style="white-space:pre-wrap;">${escapeHtml(cleanMessage)}</p>`;
-
-  batch.set(
+  setDoc(
     doc(db, 'mail', mailId),
     buildMailPayload({
       uid: actorUid,
@@ -2192,13 +2191,9 @@ export async function submitSupportMessageAndNotifyEmail(params: {
       text: emailText,
       html: emailHtml,
     })
-  );
-
-  try {
-    await batch.commit();
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `support_messages/${msgId}`);
-  }
+  ).catch((err) => console.warn('Mail queue skipped:', err));
+  
+    
 
   return msgId;
 }
