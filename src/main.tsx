@@ -11,29 +11,11 @@ if (typeof window !== 'undefined') {
   });
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker
-      .getRegistrations()
-      .then((registrations) => {
-        registrations.forEach((registration) => {
-          void registration.unregister();
-        });
-      })
-      .catch(() => {
-        // Ignore cleanup errors
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {
+        // Ignore service worker registration errors
       });
-  }
-
-  if ('caches' in window) {
-    caches
-      .keys()
-      .then((keys) => {
-        keys.forEach((key) => {
-          void caches.delete(key);
-        });
-      })
-      .catch(() => {
-        // Ignore cache cleanup errors
-      });
+    });
   }
 }
 
