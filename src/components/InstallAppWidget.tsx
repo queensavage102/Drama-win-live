@@ -168,16 +168,17 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                   install the app to your Home Screen:
                 </p>
 
-                {!isIOS && (
-                  <button
-                    type="button"
-                    onClick={openInExternalBrowser}
-                    className="w-full min-h-[42px] rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    <span>Open in Chrome Now</span>
-                  </button>
-                )}
+  <button
+    type="button"
+    onClick={openInExternalBrowser}
+    className="w-full min-h-[42px] rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-black font-bold flex items-center justify-center gap-2"
+  >
+    <ExternalLink className="w-4 h-4" />
+    <span>{isIOS ? 'Open in Safari Now' : 'Open in Chrome Now'}</span>
+        
+  </button>
+
+
 
                 <button
                   type="button"
