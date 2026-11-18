@@ -13,6 +13,7 @@ import {
 import { R3_BOOST_ZAR, R3_MYSTERY_CYCLE_ADS } from '../constants';
 import { SupportCategory, SupportMessageRecord } from '../types';
 import { addLocalSupportMessage } from '../utils/localState';
+import { submitSupportMessageAndNotifyEmail } from '../services/dramaWinService';
 
 const CHAT_STORAGE_KEY = 'dramawin_support_chat_v1';
 
@@ -283,6 +284,21 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     setMessages((prev) => [...prev, userMsg]);
     setChatInput('');
     setIsTyping(true);
+    const chatTicketId = `chat-${now}-${Math.random().toString(36).slice(2, 6)}`;
+    const nextTickets = addLocalSupportMessage({
+      id: chatTicketId,
+      uid,
+      username: (username || 'Player').trim(),
+      contact: (contact || firebaseEmail || 'In-App Chat').trim(),
+      category: 'general',
+      subject: 'AI Chat Message',
+      message: trimmed,
+      status: 'open',
+      source: 'local',
+      createdAtMs: now,
+      updatedAtMs: now,
+    });
+    onTicketsUpdated?.(nextTickets);
 
     setTimeout(() => {
       const reply = buildConversationalReply(trimmed, {
