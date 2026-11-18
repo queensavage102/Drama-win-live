@@ -14,7 +14,7 @@ import {
 import { R3_BOOST_ZAR, R3_MYSTERY_CYCLE_ADS } from '../constants';
 import { SupportCategory, SupportMessageRecord } from '../types';
 import { addLocalSupportMessage } from '../utils/localState';
-import { submitSupportMessageAndNotifyEmail } from '../services/dramaWinService';
+import { submitSupportMessageAndNotifyEmail } from '../services/dramawinService';
 
 const CHAT_STORAGE_KEY = 'dramawin_support_chat_v1';
 
