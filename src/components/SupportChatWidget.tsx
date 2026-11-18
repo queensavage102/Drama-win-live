@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Bot,
@@ -299,6 +300,15 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
       updatedAtMs: now,
     });
     onTicketsUpdated?.(nextTickets);
+    submitSupportMessageAndNotifyEmail({
+      id: chatTicketId,
+      uid: uid || '',
+      username: (username || 'Player').trim(),
+      contact: (contact || firebaseEmail || 'In-App Chat').trim(),
+      category: 'general',
+      subject: 'AI Chat Message',
+      message: trimmed,
+    }).catch((err) => console.error('Cloud chat sync failed:', err));
 
     setTimeout(() => {
       const reply = buildConversationalReply(trimmed, {
