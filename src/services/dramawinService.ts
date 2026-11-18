@@ -2182,7 +2182,7 @@ export async function submitSupportMessageAndNotifyEmail(params: {
 <p><strong>Player:</strong> ${escapeHtml(cleanUsername)} (${escapeHtml(actorUid)})</p>
 <p><strong>Contact:</strong> ${escapeHtml(cleanContact)}</p>
 <p><strong>Category:</strong> ${escapeHtml(params.category)}</p>
-<p><strong>Subject:</strong> ${escapeHtml(cleanSubject)}</p>
+<p><strong>Subject:</strong> ${escapeHtml(cleanSubject)}</p>`;
   setDoc(
     doc(db, 'mail', mailId),
     buildMailPayload({
