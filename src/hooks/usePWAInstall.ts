@@ -126,7 +126,9 @@ export function usePWAInstall() {
       const strippedUrl = currentUrl.replace(/^https?:\/\//, '');
       window.location.href = `intent://${strippedUrl}#Intent;scheme=https;package=com.android.chrome;end`;
     } else {
-      window.open(currentUrl, '_blank', 'noopener,noreferrer');
+      window.location.href = currentUrl.replace(/^https?:\/\//i, 'x-safari-https://');
+
+      
     }
   }, [isIOS]);
 
