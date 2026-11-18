@@ -2137,10 +2137,8 @@ export async function submitSupportMessageAndNotifyEmail(params: {
   subject: string;
   message: string;
 }): Promise<string> {
-  const actorUid = auth.currentUser?.uid;
-  if (!actorUid) {
-    throw new Error('Google sign-in required to sync support ticket to Firebase.');
-  }
+    const actorUid = auth.currentUser?.uid || params.uid?.trim() || `guest_${Date.now()}`;
+
 
   const msgId =
     params.id?.trim() || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
